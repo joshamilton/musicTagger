@@ -10,6 +10,7 @@ import os
 import pandas as pd
 import re
 from functions import update_tags
+from functions import get_album_tags_renaissance
 
 ################################################################################
 ### Guess album-level tags
@@ -17,46 +18,27 @@ from functions import update_tags
 
 # Specify search dir
 search_dir = '/Volumes/TheLibrary/Audio/Lossless-Classical-Untagged/Classical - composer/00 - Renaissance'
+get_album_tags_renaissance(search_dir)
 
-# Find albums. Folders will have the pattern [yyyy] album (info). Only the [yyyy] part needs to matched.
-pattern = re.compile(r'\[\d{4}\]')
-album_list = []
-for dirpath, dirnames, filenames in os.walk(search_dir):
-    for dirname in dirnames:
-        match = pattern.match(dirname)
-        if match:
-            album_list.append(dirname)
+################################################################################
+### Guess track-level tags
+################################################################################
 
-# Create dataframe to store album-level tags:
-# Album, Year Released, Orchestra, Conductor, Composer, Genre
-album_tags_df = pd.DataFrame(index = album_list, columns = ['Album', 'Year Released', \
-                                                            'Orchestra', 'Conductor', \
-                                                            'Soloists', 'Genre'])
+# # Specify search dir
+# search_dir = '/Volumes/TheLibrary/Audio/Lossless-Classical-Untagged/Classical - composer/00 - Renaissance'
 
+# # Find tracks: end in .flac
+# track_list = []
+# for dirpath, dirnames, filenames in os.walk(search_dir):
+#     for file in filenames:
+#         if file.endswith('.flac'):
+#             track_list.append(os.path.join(search_dir, file))
 
-### Rewrite to exlucde album and genre
-### Album won't contain interpunct, pipe, and colon characters - extract from tag
-### Genre may differ between tracks
-# Loop over albums to extract tags
-# Folders will have the pattern [yyyy] album (info). All parts needed
-pattern = re.compile(r'\[(\d{4})\]\s(.+)\s\((.+)\)')
-for album_info in album_list:
-   foo, year, album, performer_info, bar = re.split(pattern, album_info)
-   album_tags_df.loc[album_info, 'Album'] = album
-   album_tags_df.loc[album_info, 'Year Released'] = year
-   album_tags_df.loc[album_info, 'Genre'] = 'Renaissance' 
-   # Process the performer_info (Orchestra, Conductor, Soloist tags)
-   # Option 1: ensemble with conductor. Contains 'with' and lacks ','
-   # Option 2: ensemble only. Lacks 'with' and ','
-   # Option 3: soloists. Contains ',' and lacks 'with'
-   if 'with' in performer_info and ',' in performer_info:
-   elif 'with' in performer_info:
-   elif ',' in performer_info:
-       
-       
-
-album_tags_df.to_excel('tags.xlsx')
-
+# # Create dataframe to store album-level tags:
+# # Album, Year Released, Orchestra, Conductor, Composer, Genre
+# track_tags_df = pd.DataFrame(index = track_list, columns = ['Year Released', 'Album', \
+#                                                             'Orchestra', 'Conductor', \
+#                                                             'Soloists', 'Genre'])
 
 # ################################################################################
 # ### Update tags
