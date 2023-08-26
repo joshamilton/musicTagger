@@ -27,7 +27,7 @@ def get_album_tags_renaissance(search_dir):
             match = year_pattern.match(dirname)
             if match:
                 album_path_list.append(os.path.join(dirpath, dirname))
-
+    album_path_list = sorted(album_path_list)
     # Create dataframe to store album-level tags:
     # Album, Year Released, Orchestra, Conductor, Composer, Genre
     # Some fields can't get filled from existing tags. Retain them in the dataframe so I can manually fill them in later.
@@ -62,8 +62,9 @@ def get_album_tags_renaissance(search_dir):
         elif 'with' not in performer_info and ',' in performer_info:
             soloists = performer_info.replace(', ', ';')
             album_tags_df.loc[album_path, 'Soloists'] = soloists
-        
+    
     album_tags_df.to_excel('album_tags.xlsx')
+    return(album_tags)
 
 ### Update tags
 def update_tags(tags_df):
