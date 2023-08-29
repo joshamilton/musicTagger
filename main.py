@@ -109,9 +109,12 @@ for track_path in track_path_list:
         movement = work_match.group(2)
         track_tags_df.loc[track_path, 'Movement'] = movement
     # NAME - will be in quotes, preceding comma may be optional
+    # If trailing comma is present, needs to be stripped
     name_match = re.search(r'(.+),?\s\'(.+)\'', work)
     if name_match:
         work = name_match.group(1)
+        if work.endswith(','):
+            work = work.rstrip(',')
         name = name_match.group(2)
         track_tags_df.loc[track_path, 'Name'] = name
     # NUMBER - begins with NO // OPUS - begins with Op
