@@ -8,6 +8,7 @@
 ################################################################################
 import mutagen
 import mutagen.flac
+import mutagen.easyid3
 import os
 import pandas as pd
 import re
@@ -142,8 +143,13 @@ def update_tags(tags_df):
 
     for index, row in tags_df.iterrows():
         file_path = row['File']
+
+        # Delete all ID3 tags
+        audio_file = mutagen.easyid3.EasyID3(file_path)
+        audio_file.delete()
+
+        # Delete all FLAC tags
         audio_file = mutagen.flac.FLAC(file_path)
-        # Delete existing tags
         audio_file.delete()
         # Add new ones
         for tag, value in row.iloc[1:].items():
