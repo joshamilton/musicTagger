@@ -16,57 +16,8 @@ import re
 ### Define functions
 ################################################################################
 
-### Get album-level tags for Renaissance music
-def get_album_tags_renaissance(search_dir):
-
-    # Find albums. Folders will have the pattern [yyyy] album (info). Only the [yyyy] part needs to matched.
-    year_pattern = re.compile(r'\[\d{4}\]')
-    album_path_list = []
-    for dirpath, dirnames, filenames in os.walk(search_dir):
-        for dirname in dirnames:
-            match = year_pattern.match(dirname)
-            if match:
-                album_path_list.append(os.path.join(dirpath, dirname))
-    album_path_list = sorted(album_path_list)
-    # Create dataframe to store album-level tags:
-    # Album, Year Released, Orchestra, Conductor, Composer, Genre
-    # Some fields can't get filled from existing tags. Retain them in the dataframe so I can manually fill them in later.
-    album_tags_df = pd.DataFrame(index = album_path_list, columns = ['Composer', 'Year Released', 'Album', \
-                                                                'Orchestra', 'Conductor', 'Soloists', 'Genre', 
-                                                                'Record Label'])
-
-    # Loop over albums to extract tags
-    # Folders will have the pattern [yyyy] album (info). All parts needed
-    album_pattern = re.compile(r'\[(\d{4})\]\s(.+)\s\((.+)\)')
-    for album_path in album_path_list:
-        # Extract composer and album info
-        composer = album_path.split('/')[-2]
-        album_info = album_path.split('/')[-1]
-        foo, year, album, performer_info, bar = re.split(album_pattern, album_info)
-            # Update tags
-        album_tags_df.loc[album_path, 'Composer'] = composer
-        album_tags_df.loc[album_path, 'Album'] = album # TO DO: exclude b/c album won't contain interpunct, pipe, and colon characters
-        album_tags_df.loc[album_path, 'Year Released'] = year
-        album_tags_df.loc[album_path, 'Genre'] = 'Renaissance' # TO DO: exclude b/c genre may differ between tracks
-        # Process the performer_info (Orchestra, Conductor, Soloist tags)
-        # Option 1: ensemble with conductor. Contains 'with' and lacks ','
-        # Option 2: ensemble only. Lacks 'with' and ','
-        # Option 3: soloists. Contains ',' and lacks 'with'
-        if 'with' in performer_info and ',' not in performer_info:
-            ensemble, conductor = re.split(' with ', performer_info)
-            album_tags_df.loc[album_path, 'Orchestra'] = ensemble
-            album_tags_df.loc[album_path, 'Conductor'] = conductor
-        elif 'with' not in performer_info and ',' not in performer_info:
-            ensemble = performer_info
-            album_tags_df.loc[album_path, 'Orchestra'] = ensemble
-        elif 'with' not in performer_info and ',' in performer_info:
-            soloists = performer_info.replace(', ', ';')
-            album_tags_df.loc[album_path, 'Soloists'] = soloists
-    
-    album_tags_df.to_excel('album_tags.xlsx')
-    return(album_tags_df)
-
-def get_track_tags_renaissance(search_dir):
+### Function to get file list and create empty dataframe
+def get_tracks_create_dataframe(search_dir):
     # Find tracks: end in .flac
     track_path_list = []
     for dirpath, dirnames, filenames in os.walk(search_dir):
@@ -76,48 +27,54 @@ def get_track_tags_renaissance(search_dir):
     track_path_list = sorted(track_path_list)
 
     # Create dataframe to store track-level tags:
-    # Include album for merging with album_tags dataframe
     # Some fields can't get filled from existing tags. Retain them in the dataframe so I can manually fill them in later.
-    track_tags_df = pd.DataFrame(index = track_path_list, columns = ['Album', 'DiscNumber', 'TrackNumber', 'Title',
-                                                                'Work', 'InitialKey', 'Catalog #', 'Opus', 'Number', 
-                                                                'Name', 'Movement', 'Year Written', 'Year Recorded'])
+    track_tags_df = pd.DataFrame(index = track_path_list, columns = ['Composer', 'Album', 'Year Released', 'Record Label',
+                                                                    'Orchestra', 'Conductor', 'Soloists', 'Genre', 
+                                                                    'DiscNumber', 'TrackNumber', 'Title',
+                                                                    'Work', 'InitialKey', 'Catalog #', 'Opus', 'Number', 
+                                                                    'Name', 'Movement', 'Year Written', 'Year Recorded'])
+    
+    return track_tags_df
 
-    # # Loop over tracks to extract tags
-    # Folders will have the pattern [yyyy] album (info)/Disc 1 - subtitle/01 - title.flac. Disc is optional
-    for track_path in track_path_list:
+### Function to get track- and album-level tags
+def get_album_track_tags(track_tags_df):
 
-        # Extract album info
-        # Sometimes the track title has text in parentheses, so need to add a '/' to restrict to album
-        album_title = re.search(r'\[(\d{4})\]\s(.+)\s\((.+)\)\/', track_path).group(2)
-        track_tags_df.loc[track_path, 'Album'] = album_title
+    album_pattern = re.compile(r'\[(\d{4})\]\s(.+)')
+    for track_path in track_tags_df.index:
+        # Extract performer and year released info. All other is either encoded in tags, or must be added manually
+        soloist = track_path.split('/')[8]
+        album_info = track_path.split('/')[9] # can't split backwards, because some albums will have a Disc
+        foo, year, album, bar = re.split(album_pattern, album_info)
+            # Update tags
+        track_tags_df.loc[track_path, 'Year Released'] = year
+        # Process the performer_info (Orchestra, Conductor)
+        track_tags_df.loc[track_path, 'Soloist'] = soloist
 
-        # Extract disc info
-        if 'Disc' in track_path:
+        # Extract disc info and track numbers
+        # Must check track path b/c albums are not always tagged with the Disc #
+        if 'Disc' in track_path: 
             disc_number = re.search(r'Disc\s\d+', track_path).group(0).split(' ')[1]
             track_tags_df.loc[track_path, 'DiscNumber'] = disc_number
-
-        # Extract track info
         track_number, track_info = track_path.split('/')[-1].replace('.flac', '').split(' - ', 1)
         track_tags_df.loc[track_path, 'TrackNumber'] = track_number
-        track_tags_df.loc[track_path, 'Title'] = track_info
 
-        # Process the track info
-        # In general, tracks are formatted as:
-        # String Quartet No 76 in G,          Op 76 No 2, Hob III: 76, 'Fifths' - I. Allegro
-        # WORK                 in INITIALKEY, OPUS  NUMBER, CATALOG #, 'NAME'   - MOVEMENT
-        # With all fields other than WORK being optional
-        # Begin by searching for fields that are consistently demarcated
-        # MOVEMENT - begins with ' - ' followed by Roman numerals
-        work = track_info
+        # Extract title for processing
+        work = mutagen.flac.FLAC(track_path)['title'][0]
+        track_tags_df.loc[track_path, 'Title'] = work
+
+        # Process title into new fields
         work_match = re.search(r'(.+)\s-\s([IVXLCDM]+?\.\s.+)', work)
         if work_match:
             work = work_match.group(1)
             movement = work_match.group(2)
             track_tags_df.loc[track_path, 'Movement'] = movement
         # NAME - will be in quotes, preceding comma may be optional
+        # If trailing comma is present, needs to be stripped
         name_match = re.search(r'(.+),?\s\'(.+)\'', work)
         if name_match:
             work = name_match.group(1)
+            if work.endswith(','):
+                work = work.rstrip(',')
             name = name_match.group(2)
             track_tags_df.loc[track_path, 'Name'] = name
         # NUMBER - begins with NO // OPUS - begins with Op
@@ -149,9 +106,9 @@ def get_track_tags_renaissance(search_dir):
             work = catalog_match.group(1)
             catalog = catalog_match.group(2).strip() # remove whitespace from preceding comma
             track_tags_df.loc[track_path, 'Catalog #'] = catalog
-        # INITIALKEY - begins with valid keys (A through G) and terminates (major key) or indicates minor key (ends with minor)
+        # INITIALKEY - begins with valid keys (A through G) and terminates (major key) or indicates minor key (ends with minor, or -flat, or -sharp)
         # This avoids tiltes with ' in ' in them
-        key_match = re.search(r'(.+)\sin\s([A-G]$|[A-G]\sminor)', work)
+        key_match = re.search(r'(.+)\sin\s([A-G]$|[A-G]\sminor|[A-G]-flat|[A-G]-sharp)', work)
         if key_match:
             work = key_match.group(1)
             key = key_match.group(2)
@@ -164,8 +121,18 @@ def get_track_tags_renaissance(search_dir):
         # Update with year recorded, pulled from tag
         track_tags_df.loc[track_path, 'Year Recorded'] = mutagen.flac.FLAC(track_path)['date'][0]
 
-    track_tags_df.to_excel('track_tags.xlsx')
-    return(track_tags_df)
+        # Update with other fields pulled from the tags
+        # Album, Composer, Genre, Year Recorded
+        track_tags_df.loc[track_path, 'Album'] = mutagen.flac.FLAC(track_path)['album'][0]
+        track_tags_df.loc[track_path, 'Composer'] = mutagen.flac.FLAC(track_path)['artist'][0]
+        track_tags_df.loc[track_path, 'Genre'] = mutagen.flac.FLAC(track_path)['genre'][0]
+        track_tags_df.loc[track_path, 'Year Recorded'] = mutagen.flac.FLAC(track_path)['date'][0]
+
+    # Use XLSXwriter engine to allow for foreign-language characters
+    track_tags_df.to_excel('track_tags.xlsx', engine = 'xlsxwriter')
+
+    return
+
 
 ### Update tags
 def update_tags(tags_df):
