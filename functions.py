@@ -29,11 +29,11 @@ def get_tracks_create_dataframe(search_dir):
 
     # Create dataframe to store track-level tags:
     # Some fields can't get filled from existing tags. Retain them in the dataframe so I can manually fill them in later.
-    track_tags_df = pd.DataFrame(index = track_path_list, columns = ['Composer', 'Album', 'Year Released', 'Record Label',
+    track_tags_df = pd.DataFrame(index = track_path_list, columns = ['Composer', 'Album', 'Year Recorded',
                                                                     'Orchestra', 'Conductor', 'Soloists', 'Genre', 
                                                                     'DiscNumber', 'TrackNumber', 'Title',
                                                                     'Work', 'InitialKey', 'Catalog #', 'Opus', 'Number', 
-                                                                    'Name', 'Movement', 'Year Written', 'Year Recorded'])
+                                                                    'Name', 'Movement'])
     
     return track_tags_df
 
@@ -47,7 +47,7 @@ def get_album_track_tags(track_tags_df):
         album_info = track_path.split('/')[9] # can't split backwards, because some albums will have a Disc
         foo, year, album, bar = re.split(album_pattern, album_info)
             # Update tags
-        track_tags_df.loc[track_path, 'Year Released'] = year
+#        track_tags_df.loc[track_path, 'Year Released'] = year # No longer tracking this field
         # Process the performer_info (Orchestra, Conductor)
         track_tags_df.loc[track_path, 'Soloist'] = soloist
 
