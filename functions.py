@@ -6,12 +6,13 @@
 ################################################################################
 ### Import packages
 ################################################################################
+import os
+import re
 import mutagen
 import mutagen.flac
 import mutagen.easyid3
-import os
 import pandas as pd
-import re
+import xlsxwriter
 
 ################################################################################
 ### Define functions
@@ -43,13 +44,13 @@ def get_album_track_tags(track_tags_df):
     album_pattern = re.compile(r'\[(\d{4})\]\s(.+)')
     for track_path in track_tags_df.index:
         # Extract performer and year released info. All other is either encoded in tags, or must be added manually
-        soloist = track_path.split('/')[8]
-        album_info = track_path.split('/')[9] # can't split backwards, because some albums will have a Disc
+        soloists = track_path.split('/')[7]
+        album_info = track_path.split('/')[8] # can't split backwards, because some albums will have a Disc
         foo, year, album, bar = re.split(album_pattern, album_info)
             # Update tags
 #        track_tags_df.loc[track_path, 'Year Released'] = year # No longer tracking this field
         # Process the performer_info (Orchestra, Conductor)
-        track_tags_df.loc[track_path, 'Soloist'] = soloist
+        track_tags_df.loc[track_path, 'Soloists'] = soloists
 
         # Extract disc info and track numbers
         # Must check track path b/c albums are not always tagged with the Disc #
@@ -120,7 +121,10 @@ def get_album_track_tags(track_tags_df):
         else:
             track_tags_df.loc[track_path, 'Work'] = work
         # Update with year recorded, pulled from tag
-        track_tags_df.loc[track_path, 'Year Recorded'] = mutagen.flac.FLAC(track_path)['date'][0]
+        try:
+            track_tags_df.loc[track_path, 'Year Recorded'] = mutagen.flac.FLAC(track_path)['date'][0]
+        except:
+            continue
 
         # Update with other fields pulled from the tags
         # Album, Composer, Genre, Year Recorded

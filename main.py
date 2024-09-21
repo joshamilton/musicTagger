@@ -6,11 +6,8 @@
 ################################################################################
 ### Import packages
 ################################################################################
-import mutagen.flac
-import os
-import pandas as pd
-import re
 import functions
+import pandas as pd
 
 ################################################################################
 ### Combination function to extract album- and track-level tags
@@ -18,8 +15,9 @@ import functions
 
 # Specify search dir
 search_dir = '/Volumes/TheLibrary/Audio/Lossless-Classical-Untagged/Classical - composer/01 - Baroque/Handel, Georg Friederich/Keyboard Music new'
+# Extract tags from metadata
 track_tags_df = functions.get_tracks_create_dataframe(search_dir)
-# Get the tags
+# Get the tags and write to file
 functions.get_album_track_tags(track_tags_df)
 
 ################################################################################
