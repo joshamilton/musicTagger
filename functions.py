@@ -31,10 +31,10 @@ def get_tracks_create_dataframe(search_dir):
     # Create dataframe to store track-level tags:
     # Some fields can't get filled from existing tags. Retain them in the dataframe so I can manually fill them in later.
     track_tags_df = pd.DataFrame(index = track_path_list, columns = ['Composer', 'Album', 'Year Recorded',
-                                                                    'Orchestra', 'Conductor', 'Soloists', 'Genre', 
-                                                                    'DiscNumber', 'TrackNumber', 'Title',
+                                                                    'Orchestra', 'Conductor', 'Soloists', 'Arranger', 
+                                                                    'Genre',  'DiscNumber', 'TrackNumber', 'Title', 'TrackTitle',
                                                                     'Work', 'InitialKey', 'Catalog #', 'Opus', 'Number', 
-                                                                    'Name', 'Movement'])
+                                                                    'Name', 'Movement'] )
     
     return track_tags_df
 
@@ -142,6 +142,45 @@ def get_album_track_tags(track_tags_df):
 
     return
 
+### Function to get track-and album-level tags following initial update
+### Used to ensure consistency across tracks that were added in batches
+def get_album_track_tags_second_round(track_tags_df):
+    tags = ['Composer', 'Album', 'Year Recorded',
+            'Orchestra', 'Conductor', 'Soloists', 'Arranger', 
+            'Genre',  'DiscNumber', 'TrackNumber', 'Title', 'TrackTitle',
+            'Work', 'InitialKey', 'Catalog #', 'Opus', 'Number', 
+            'Name', 'Movement']
+
+    total_tracks = len(track_tags_df.index)
+    processed_tracks = 0
+    last_progress = 0
+
+    for track_path in track_tags_df.index:
+        try:
+            audio = mutagen.flac.FLAC(track_path)
+            
+            # Extract all available tags using exact names
+            for tag in tags:
+                if tag in audio:
+                    track_tags_df.at[track_path, tag] = audio[tag][0]
+                
+        except Exception as e:
+            print(f"Error processing {track_path}: {str(e)}")
+        
+        # Update progress
+        processed_tracks = processed_tracks + 1
+        current_progress = (processed_tracks * 100) // total_tracks
+        
+        # Only print when progress percentage changes
+        if current_progress > last_progress:
+            print(f"Progress: {current_progress}% ({processed_tracks}/{total_tracks} tracks processed)")
+            last_progress = current_progress
+
+    # Use XLSXwriter engine to allow for foreign-language characters
+    track_tags_df.to_excel('track_tags.xlsx', engine='xlsxwriter')
+    print("Completed! All tracks processed and Excel file generated.")
+
+    return
 
 ### Update tags
 def update_tags(tags_df):
@@ -171,3 +210,67 @@ def update_tags(tags_df):
         audio_file.save()
         # Report on progress
         print('Completed ' + str(index + 1) + ' of ' + str(total_files))
+
+
+def update_tags_second_round(original_df, new_df):
+    # Ensure both dataframes use file_path as index for easier comparison
+    original_df = original_df.set_index('File') if 'File' in original_df.columns else original_df
+    new_df = new_df.set_index('File') if 'File' in new_df.columns else new_df
+    
+    # Find common files
+    common_files = set(original_df.index) & set(new_df.index)
+    total_files = len(common_files)
+    processed_files = 0
+    updated_files = 0
+    last_progress = -1
+
+    for file_path in common_files:
+        changes_needed = False
+        original_row = original_df.loc[file_path]
+        new_row = new_df.loc[file_path]
+        
+        # Compare tags
+        for column in new_df.columns:
+            if column != 'file_path':  # Skip the file path column if it exists
+                original_value = str(original_row.get(column, 'nan'))
+                new_value = str(new_row.get(column, 'nan'))
+                
+                if original_value != new_value and new_value != 'nan':
+                    changes_needed = True
+                    break
+        
+        if changes_needed:
+            try:
+                # Delete all ID3 tags
+                try:
+                    audio_file = mutagen.easyid3.EasyID3(file_path)
+                    audio_file.delete()
+                except:
+                    pass
+
+                # Delete and update FLAC tags
+                audio_file = mutagen.flac.FLAC(file_path)
+                audio_file.delete()
+                
+                # Add new tags
+                for tag, value in new_row.items():
+                    if str(value) != 'nan':
+                        audio_file[tag] = str(value)
+                
+                audio_file.save()
+                updated_files += 1
+                
+            except Exception as e:
+                print(f"Error updating {file_path}: {str(e)}")
+        
+        # Update progress
+        processed_files += 1
+        current_progress = (processed_files * 100) // total_files
+        
+        # Only print when progress percentage changes
+        if current_progress > last_progress:
+            print(f"Progress: {current_progress}% ({processed_files}/{total_files} files processed, {updated_files} updated)")
+            last_progress = current_progress
+
+    print(f"\nCompleted! Processed {processed_files} files, updated {updated_files} files.")
+    return updated_files
