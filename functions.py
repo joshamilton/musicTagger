@@ -44,8 +44,8 @@ def get_album_track_tags(track_tags_df):
     album_pattern = re.compile(r'\[(\d{4})\]\s(.+)')
     for track_path in track_tags_df.index:
         # Extract performer and year released info. All other is either encoded in tags, or must be added manually
-        soloists = track_path.split('/')[9]
-        album_info = track_path.split('/')[10] # can't split backwards, because some albums will have a Disc
+        soloists = track_path.split('/')[8]
+        album_info = track_path.split('/')[9] # can't split backwards, because some albums will have a Disc
         foo, year, album, bar = re.split(album_pattern, album_info)
             # Update tags
 #        track_tags_df.loc[track_path, 'Year Released'] = year # No longer tracking this field
@@ -187,6 +187,8 @@ def update_tags(tags_df):
 
     # Iterator
     total_files = len(tags_df)
+    processed_files = 0
+    last_progress = -1
 
     for index, row in tags_df.iterrows():
         file_path = row['File']
@@ -208,8 +210,17 @@ def update_tags(tags_df):
                 audio_file[tag] = value
         # Save results
         audio_file.save()
-        # Report on progress
-        print('Completed ' + str(index + 1) + ' of ' + str(total_files))
+
+        # Update progress
+        processed_files += 1
+        current_progress = (processed_files * 100) // total_files
+        
+        # Only print when progress percentage changes
+        if current_progress > last_progress:
+            print(f"Progress: {current_progress}% ({processed_files}/{total_files} files processed, {updated_files} updated)")
+            last_progress = current_progress
+
+    print(f"\nCompleted! Processed {processed_files} files.")
 
 
 def update_tags_second_round(original_df, new_df):
