@@ -24,7 +24,7 @@ def main():
         if args.mode == 'read':
             # Create dataframe and get tags
             tags_df = functions.get_tracks_create_dataframe(args.dir)
-            tags_df = functions.get_album_track_tags(tags_df)
+            tags_df = functions.get_tags(tags_df)
             # Use XLSXwriter engine to allow for foreign-language characters
             tags_df.to_excel(args.excel_out, engine = 'xlsxwriter')
             print(f"Tags saved to {args.excel_out}")

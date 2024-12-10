@@ -1,6 +1,6 @@
 ################################################################################
 ### functions.py
-### Copyright (c) 2023, Joshua J Hamilton
+### Copyright (c) 2024, Joshua J Hamilton
 ################################################################################
 
 ################################################################################
@@ -58,7 +58,7 @@ def get_album_info_from_path(track_path):
     return ''
 
 ### Function to get track- and album-level tags
-def get_album_track_tags(tags_df):
+def get_tags(tags_df):
     """Extract tags from file paths and update dataframe"""
     album_pattern = re.compile(r'\[(\d{4})\]\s(.+)')
     total_files = len(tags_df)

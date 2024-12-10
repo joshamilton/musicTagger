@@ -1,3 +1,6 @@
 .vscode
 *.xlsx
 __pycache__
+extra_functions.py
+old_functions.py
+prompts.txt
