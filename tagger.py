@@ -14,8 +14,8 @@ def main():
     parser = argparse.ArgumentParser(description='Classical music file tagger')
     parser.add_argument('mode', choices=['read', 'write'], help='Operation mode: read tags or write tags')
     parser.add_argument('--dir', '-d', required=False, help='Directory containing music files')
-    parser.add_argument('--excel_in', '-i', required=False, help='Excel file path for reading tags')
-    parser.add_argument('--excel_out', '-o', required=True, help='Excel file path for writing tags')
+    parser.add_argument('--excel_in', '-i', required=True, help='Excel file path for reading tag information')
+    parser.add_argument('--excel_out', '-o', required=False, help='Excel file path for writing tag information')
 
     args = parser.parse_args()
 
