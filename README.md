@@ -46,7 +46,7 @@ The utility has two modes: read and write.
 Read existing tags from a directory of FLAC files:
 
 ```bash
-python tagger.py \
+python src/tagger.py \
     read \
     --dir "path/to/music/files" \
     --excel_out "tags.xlsx"
@@ -61,7 +61,7 @@ This will:
 Update tags from an Excel file:
 
 ```bash
-python tagger.py \
+python src/tagger.py \
     write \
     --excel_in "updated_tags.xlsx" \
     --excel_out "failed_tags.xlsx"

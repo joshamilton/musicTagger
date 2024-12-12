@@ -4,10 +4,26 @@
 ################################################################################
 
 import argparse
+import os
 import sys
 import pandas as pd
 import functions
 
+def validate_inputs(mode, dir_path, excel_in, excel_out):
+    """Validate inputs for read and write modes."""
+    if mode == 'read':
+        if not dir_path or not os.path.isdir(dir_path):
+            raise ValueError("Invalid or missing directory path containing music files.")
+        if not excel_out or not os.path.isdir(os.path.dirname(excel_out)):
+            raise ValueError("Invalid or missing file path for writing tag information.")
+    elif mode == 'write':
+        if not excel_in or not os.path.isfile(excel_in):
+            raise ValueError("Invalid or missing file path for reading tag information.")
+        if not excel_out or not os.path.isdir(os.path.dirname(excel_out)):
+            raise ValueError("Invalid or missing directory path for writing failed tags.")
+    else:
+        raise ValueError("Invalid mode. Choose 'read' or 'write'.")
+    
 def main():
     """Command-line utility to read or write tags from/to music files"""
 
@@ -20,7 +36,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        
+        # Validate inputs
+        validate_inputs(args.mode, args.dir, args.excel_in, args.excel_out)
+
         if args.mode == 'read':
             # Create dataframe and get tags
             tags_df = functions.get_tracks_create_dataframe(args.dir)
