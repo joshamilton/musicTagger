@@ -237,9 +237,9 @@ def update_tags(tags_df):
             if opus_number:
                 title_parts.append(f", {opus_number}")
             if initial_key:
-                title_parts.append(f" in {initial_key}")
+                title_parts.append(f", in {initial_key}")
             if epithet:
-                title_parts.append(f" {epithet}")
+                title_parts.append(f", '{epithet}'")
             if movement:
                 title_parts.append(f" - {movement}")
 
