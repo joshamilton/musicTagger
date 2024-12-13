@@ -9,18 +9,24 @@ import sys
 import pandas as pd
 import functions
 
-def validate_inputs(mode, dir_path, excel_in, excel_out):
+def validate_inputs(args):
     """Validate inputs for read and write modes."""
-    if mode == 'read':
-        if not dir_path or not os.path.isdir(dir_path):
+    if args.mode == 'read':
+        if not args.dir or not os.path.isdir(args.dir):
             raise ValueError("Invalid or missing directory path containing music files.")
-        if not excel_out or not os.path.isdir(os.path.dirname(excel_out)):
+        if not args.excel_out:
             raise ValueError("Invalid or missing file path for writing tag information.")
-    elif mode == 'write':
-        if not excel_in or not os.path.isfile(excel_in):
+        output_dir = os.path.dirname(args.excel_out) or '.'  # Default to current directory if no directory given
+        if not args.excel_out or not os.path.isdir(output_dir):
+            raise ValueError("Invalid or missing file path for writing tag information.")
+    elif args.mode == 'write':
+        if not args.excel_in or not os.path.isfile(args.excel_in):
             raise ValueError("Invalid or missing file path for reading tag information.")
-        if not excel_out or not os.path.isdir(os.path.dirname(excel_out)):
-            raise ValueError("Invalid or missing directory path for writing failed tags.")
+        if not args.excel_out:
+            raise ValueError("Invalid or missing file path for writing failed tags.")
+        output_dir = os.path.dirname(args.excel_out) or '.'  # Default to current directory if no directory given
+        if not args.excel_out or not os.path.isdir(output_dir):
+            raise ValueError("Invalid or missing file path for writing failed tags.")
     else:
         raise ValueError("Invalid mode. Choose 'read' or 'write'.")
     
@@ -30,14 +36,14 @@ def main():
     parser = argparse.ArgumentParser(description='Classical music file tagger')
     parser.add_argument('mode', choices=['read', 'write'], help='Operation mode: read tags or write tags')
     parser.add_argument('--dir', '-d', required=False, help='Directory containing music files')
-    parser.add_argument('--excel_in', '-i', required=True, help='Excel file path for reading tag information')
-    parser.add_argument('--excel_out', '-o', required=False, help='Excel file path for writing tag information')
+    parser.add_argument('--excel_in', '-i', required=False, help='Excel file path for reading tag information')
+    parser.add_argument('--excel_out', '-o', required=True, help='Excel file path for writing tag information')
 
     args = parser.parse_args()
 
     try:
         # Validate inputs
-        validate_inputs(args.mode, args.dir, args.excel_in, args.excel_out)
+        validate_inputs(args)
 
         if args.mode == 'read':
             # Create dataframe and get tags

@@ -1,5 +1,6 @@
 import pytest
 import os
+from argparse import Namespace
 from src.tagger import validate_inputs
 
 @pytest.fixture
@@ -26,48 +27,58 @@ def setup_directories_and_files(tmp_path):
 # Test cases for validate_inputs
 def test_validate_inputs_read_mode_valid(setup_directories_and_files):
     valid_dir, _, output_excel = setup_directories_and_files
-    validate_inputs('read', str(valid_dir), None, str(output_excel))
+    args = Namespace(mode='read', dir=str(valid_dir), excel_in=None, excel_out=str(output_excel))
+    validate_inputs(args)
 
 def test_validate_inputs_read_mode_invalid_dir(setup_directories_and_files):
     _, _, output_excel = setup_directories_and_files
+    args = Namespace(mode='read', dir='invalid_dir', excel_in=None, excel_out=str(output_excel))
     with pytest.raises(ValueError, match="Invalid or missing directory path containing music files."):
-        validate_inputs('read', 'invalid_dir', None, str(output_excel))
+        validate_inputs(args)
 
 def test_validate_inputs_read_mode_missing_dir(setup_directories_and_files):
     _, _, output_excel = setup_directories_and_files
+    args = Namespace(mode='read', dir=None, excel_in=None, excel_out=str(output_excel))
     with pytest.raises(ValueError, match="Invalid or missing directory path containing music files."):
-        validate_inputs('read', None, None, str(output_excel))
+        validate_inputs(args)
 
 def test_validate_inputs_read_mode_invalid_output(setup_directories_and_files):
     valid_dir, _, _ = setup_directories_and_files
+    args = Namespace(mode='read', dir=str(valid_dir), excel_in=None, excel_out='invalid_path/output.xlsx')
     with pytest.raises(ValueError, match="Invalid or missing file path for writing tag information."):
-        validate_inputs('read', str(valid_dir), None, 'invalid_path/output.xlsx')
+        validate_inputs(args)
 
 def test_validate_inputs_read_mode_missing_output(setup_directories_and_files):
     valid_dir, _, _ = setup_directories_and_files
+    args = Namespace(mode='read', dir=str(valid_dir), excel_in=None, excel_out=None)
     with pytest.raises(ValueError, match="Invalid or missing file path for writing tag information."):
-        validate_inputs('read', str(valid_dir), None, None)
+        validate_inputs(args)
 
 def test_validate_inputs_write_mode_valid(setup_directories_and_files):
     _, input_excel, output_excel = setup_directories_and_files
-    validate_inputs('write', None, str(input_excel), str(output_excel))
+    args = Namespace(mode='write', dir=None, excel_in=str(input_excel), excel_out=str(output_excel))
+    validate_inputs(args)
 
 def test_validate_inputs_write_mode_invalid_input(setup_directories_and_files):
     _, _, output_excel = setup_directories_and_files
+    args = Namespace(mode='write', dir=None, excel_in='invalid_input.xlsx', excel_out=str(output_excel))
     with pytest.raises(ValueError, match="Invalid or missing file path for reading tag information."):
-        validate_inputs('write', None, 'invalid_input.xlsx', str(output_excel))
+        validate_inputs(args)
 
 def test_validate_inputs_write_mode_missing_input(setup_directories_and_files):
     _, _, output_excel = setup_directories_and_files
+    args = Namespace(mode='write', dir=None, excel_in=None, excel_out=str(output_excel))
     with pytest.raises(ValueError, match="Invalid or missing file path for reading tag information."):
-        validate_inputs('write', None, None, str(output_excel))
+        validate_inputs(args)
 
 def test_validate_inputs_write_mode_invalid_output(setup_directories_and_files):
     _, input_excel, _ = setup_directories_and_files
-    with pytest.raises(ValueError, match="Invalid or missing directory path for writing failed tags."):
-        validate_inputs('write', None, str(input_excel), 'invalid_path/output.xlsx')
+    args = Namespace(mode='write', dir=None, excel_in=str(input_excel), excel_out='invalid_path/output.xlsx')
+    with pytest.raises(ValueError, match="Invalid or missing file path for writing failed tags."):
+        validate_inputs(args)
 
 def test_validate_inputs_write_mode_missing_output(setup_directories_and_files):
     _, input_excel, _ = setup_directories_and_files
-    with pytest.raises(ValueError, match="Invalid or missing directory path for writing failed tags."):
-        validate_inputs('write', None, str(input_excel), None)
+    args = Namespace(mode='write', dir=None, excel_in=str(input_excel), excel_out=None)
+    with pytest.raises(ValueError, match="Invalid or missing file path for writing failed tags."):
+        validate_inputs(args)
