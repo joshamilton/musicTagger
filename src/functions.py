@@ -251,7 +251,9 @@ def update_tags(tags_df):
 
             # Rename the track
             track_number = row.get('TrackNumber', '')
-            new_file_name = f"{track_number} - {title}.flac"
+            # Sanitize the title
+            safe_title = re.sub(r'[\\/:*?"<>|]', '_', title)
+            new_file_name = f"{track_number} - {safe_title}.flac"
             new_file_path = os.path.join(os.path.dirname(file_path), new_file_name)
             os.rename(file_path, new_file_path)
 
