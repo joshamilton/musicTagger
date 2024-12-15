@@ -1,0 +1,28 @@
+# Based on
+# https://github.com/marketplace/actions/setup-micromamba
+# https://github.com/actions/starter-workflows/blob/main/ci/python-app.yml
+
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup micromamba and environment
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: musicTagger.yml
+          init-shell: bash
+          cache-environment: true
+          post-cleanup: 'all'
+
+      - name: Test with pytest
+        run: |
+          pytest
+        shell: micromamba-shell {0}

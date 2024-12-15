@@ -1,0 +1,11 @@
+name: musicTagger
+channels:
+  - conda-forge
+dependencies:
+  - mutagen=1.40.0
+  - pandas
+  - pytest=7.4.4
+  - python=3.12.0
+  - tqdm
+  - xlsxwriter
+prefix: /Users/joshamilton/miniforge3/envs/musicTagger
