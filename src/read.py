@@ -17,7 +17,43 @@ from tqdm import tqdm  # For better progress tracking
 ### Define functions
 ################################################################################
 
-### Function to get file list and create empty dataframe
+def get_flac_files(search_dir):
+    """
+    Get a list of FLAC files in the specified directory.
+
+    Args:
+        search_dir (str): Directory to search for FLAC files.
+
+    Returns:
+        list: List of FLAC file paths.
+
+    Raises:
+        ValueError: If no FLAC files are found in the directory.
+    """
+    track_path_list = []
+    for dirpath, dirnames, filenames in os.walk(search_dir):
+        for file in filenames:
+            if file.endswith('.flac'):
+                track_path_list.append(os.path.join(dirpath, file))
+    if not track_path_list:
+        raise ValueError("No FLAC files found in the specified directory.")
+    return sorted(track_path_list)
+
+def create_tags_dataframe(track_path_list):
+    """
+    Create an empty dataframe to store tags for the given tracks.
+
+    Args:
+        track_path_list (list): List of track file paths.
+
+    Returns:
+        pd.DataFrame: DataFrame with track paths as index and columns for tags.
+    """
+    columns = ['Composer', 'Album', 'Year Recorded', 'Orchestra', 'Conductor', 'Soloists', 'Arranger', 
+               'Genre', 'DiscNumber', 'TrackNumber', 'Title', 'TrackTitle', 'Work', 'Work Number', 
+               'InitialKey', 'Catalog #', 'Opus', 'Opus Number', 'Epithet', 'Movement']
+    return pd.DataFrame(index=track_path_list, columns=columns)
+
 def get_tracks_create_dataframe(search_dir):
     """
     Get list of tracks and create an empty dataframe to store tags.
@@ -28,23 +64,8 @@ def get_tracks_create_dataframe(search_dir):
     Returns:
         pd.DataFrame: DataFrame with track paths as index and columns for tags.
     """
-    # Find tracks: end in .flac
-    track_path_list = []
-    for dirpath, dirnames, filenames in os.walk(search_dir):
-        for file in filenames:
-            if file.endswith('.flac'):
-                track_path_list.append(os.path.join(dirpath, file))
-    track_path_list = sorted(track_path_list)
-
-    # Create dataframe to store track-level tags:
-    # Some fields can't get filled from existing tags. Retain them in the dataframe so I can manually fill them in later.
-    tags_df = pd.DataFrame(index = track_path_list, columns = ['Composer', 'Album', 'Year Recorded',
-                                                                    'Orchestra', 'Conductor', 'Soloists', 'Arranger', 
-                                                                    'Genre',  'DiscNumber', 'TrackNumber', 'Title', 'TrackTitle',
-                                                                    'Work', 'Work Number', 'InitialKey', 'Catalog #', 'Opus', 'Opus Number', 
-                                                                    'Epithet', 'Movement'] )
-    
-    return tags_df
+    track_path_list = get_flac_files(search_dir)
+    return create_tags_dataframe(track_path_list)
 
 ### Function to extract album info from path
 def get_album_info_from_path(track_path):

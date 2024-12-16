@@ -13,6 +13,10 @@ import write
 def validate_inputs(args):
     """
     Validate inputs for read and write modes.
+    For read mode: ensures that a valid directory path is given
+    For read mode: ensures that the output Excel file path is valid
+    For write mode: ensures that the input Excel file path is valid
+    For write mode: ensures that the output Excel file path is valid
 
     Args:
         args (argparse.Namespace): Parsed command-line arguments.
