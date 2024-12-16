@@ -7,10 +7,19 @@ import argparse
 import os
 import sys
 import pandas as pd
-import functions
+import read
+import write
 
 def validate_inputs(args):
-    """Validate inputs for read and write modes."""
+    """
+    Validate inputs for read and write modes.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+
+    Raises:
+        ValueError: If any of the input arguments are invalid.
+    """
     if args.mode == 'read':
         if not args.dir or not os.path.isdir(args.dir):
             raise ValueError("Invalid or missing directory path containing music files.")
@@ -47,8 +56,8 @@ def main():
 
         if args.mode == 'read':
             # Create dataframe and get tags
-            tags_df = functions.get_tracks_create_dataframe(args.dir)
-            tags_df = functions.get_tags(tags_df)
+            tags_df = read.get_tracks_create_dataframe(args.dir)
+            tags_df = read.get_tags(tags_df)
             # Use XLSXwriter engine to allow for foreign-language characters
             tags_df.to_excel(args.excel_out, engine = 'xlsxwriter')
             print(f"Tags saved to {args.excel_out}")
@@ -57,7 +66,7 @@ def main():
             # Read tags from Excel and update files
             tags_df = pd.read_excel(args.excel_in, dtype=str, index_col=0)
             tags_df = tags_df.fillna('')
-            successful_df, failed_df = functions.update_tags(tags_df)
+            successful_df, failed_df = write.update_tags(tags_df)
             # Use XLSXwriter engine to allow for foreign-language characters
             failed_df.to_excel(args.excel_out, engine = 'xlsxwriter')
             print(f"Failed tags saved to {args.excel_out}")
