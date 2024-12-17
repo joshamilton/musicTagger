@@ -79,12 +79,10 @@ def get_tracks_create_dataframe(search_dir):
     return create_tags_dataframe(track_path_list)
 
 ################################################################################
-### Define functions
-### Read tags from file paths
+### Process track path: get album string, disc number from track path
 ################################################################################
 
-### Function to extract album info from path
-def get_album_info_from_path(track_path):
+def get_album_string_from_track_path(track_path):
     """
     Extract album info by walking up the path to find the album folder.
 
@@ -92,7 +90,7 @@ def get_album_info_from_path(track_path):
         track_path (str): Path to the track file.
 
     Returns:
-        album_info (str): Album information extracted from the path.
+        album_string (str): Album information extracted from the path.
     """
     parts = track_path.split('/')
     
@@ -108,7 +106,150 @@ def get_album_info_from_path(track_path):
             return folder
     return ''
 
-def extract_album_info(track_path):
+def get_disc_number_from_track_path(track_path):
+    """
+    Extract disc number from album information.
+
+    Args:
+        track_path (str): Album information extracted from the path.
+
+    Returns:
+        disc_number (str): Disc number extracted from the album information.
+    """
+    possible_disc_names = ['Disc', 'Disk', 'CD']
+    disc_pattern = r'(' + '|'.join(possible_disc_names) + r')\s(\d+)'
+    if any(keyword in track_path for keyword in possible_disc_names):
+        disc_match = re.search(disc_pattern, track_path)
+        if disc_match:
+            return disc_match.group(2)
+    return None
+
+################################################################################
+### Process album string: Parse album string into fields: album, year_recorded, 
+### orchestra, conductor or extract from file tags
+################################################################################
+
+def parse_performer_string(orchestra_conductor_string):
+    """
+    Extract orchestra and conductor names from a combined string.
+
+    The function handles three formats:
+    1. "Orchestra with Conductor" - Example: "B'Rock Orchestra with Dmitry Sinkovsky"
+    2. "Orchestra, Conductor" or "Conductor, Orchestra" - Examples:
+       - "Harnoncourt, Concentus Musicus Wien"
+       - "Brandenburg Consort, Goodman"
+    3. "Orchestra" only - Example: "Capella Savaria"
+
+    Args:
+        orchestra_conductor_string (str): String containing orchestra and/or conductor names
+
+    Returns:
+        tuple: (orchestra, conductor) where conductor may be None if not present
+    """
+    # If naming convention is Orchestra with Conductor
+    if 'with' in orchestra_conductor_string:
+        parts = orchestra_conductor_string.split('with')
+        orchestra = parts[0].strip()
+        conductor = parts[1].strip()
+    # If naming convention is Orchestra, Conductor or Conductor, Orchestra
+    elif ',' in orchestra_conductor_string:
+        parts = orchestra_conductor_string.split(',')
+        # Determine if the split is orchestra, conductor or conductor, orchestra
+        # If the first part is longer, it is the orchestra
+        # Otherwise, it is the conductor
+        len_first = len(parts[0].split())
+        len_second = len(parts[1].split())
+        if len_first > len_second:
+            orchestra = parts[0]
+            conductor = parts[1]
+        else:
+            orchestra = parts[1]
+            conductor = parts[0]
+    # Otherwise, assume the entire string is the orchestra
+    else:
+        orchestra = orchestra_conductor_string
+        conductor = None
+        
+    return orchestra, conductor
+
+def parse_fields_from_matching_album_string(match):
+
+    """
+    Extract album metadata from a regex match object containing album string pattern.
+    Expected format: '[YEAR] ALBUM_NAME (PERFORMER_INFO: ORCHESTRA and CONDUCTOR)'
+    
+    Args:
+        match (re.Match): Regex match object with two groups:
+            1. year_recorded
+            2. album_string (includes album name and performer info)
+            
+    Returns:
+        tuple: (album, year_recorded, orchestra, conductor)
+    """
+
+    # The match object should have two groups: year_recorded and album_string
+    year_recorded, album_string = match.groups()
+    logging.info(f"{album_string}: Album info follows the convention. Attempting to extract from file path.")
+    # Extract the album, orchestra and conductor
+    try:
+        album_string = album_string.split(' (')
+        album = album_string[0]
+        orchestra_conductor = album_string[1].replace(')', '')
+        orchestra, conductor = parse_performer_string(orchestra_conductor)
+    # Otherwise, asusme orchestra and conductor are not present in album string
+    except:
+        album = album_string
+
+    return album, year_recorded, orchestra, conductor
+
+def get_tags_from_file_with_unmatched_album_string(track_path):
+    """
+    Extract album metadata from FLAC file tags when path pattern doesn't match.
+    
+    Falls back to reading metadata directly from audio file tags when the path
+    doesn't follow the expected naming convention.
+    
+    Args:
+        track_path (str): Path to the FLAC audio file
+        
+    Returns:
+        tuple: (album, year_recorded, orchestra, conductor)
+            
+    Note:
+        Any tag that cannot be read will return None for that field
+    """
+    
+    logging.info(f"{track_path}: Album info does not follow the convention. Attempting to extract from file tags.")
+    # Extract album, year_recorded, orchestra, conductor
+    audio_file = mutagen.flac.FLAC(track_path)
+    # Album
+    try:
+        album = audio_file['album'][0]
+    except:
+        album = None
+    # Year recorded
+    try:
+        year_recorded = audio_file['year'][0]
+    except:
+        year_recorded = None
+    # Orchestra
+    try:
+        orchestra = audio_file['orchestra'][0]
+    except:
+        orchestra = None
+    # Conductor
+    try:
+        conductor = audio_file['conductor'][0]
+    except:
+        conductor = None
+
+    return album, year_recorded, orchestra, conductor
+
+    
+# Master function that integrates the above functions: get_album_string_from_track_path, 
+# get_disc_number_from_track_path, parse_fields_from_matching_album_string, 
+# get_tags_from_file_with_unmatched_album_string
+def get_fields_from_album_string(track_path):
     """
     Extract album information from the track path
 
@@ -116,100 +257,29 @@ def extract_album_info(track_path):
         track_path (str): Path to the track file.
     
     Returns:
-        tuple: (album, year_recorded, orchestra, conductor, disc_number)
+        tuple: (album, year_recorded, orchestra, conductor)
     """
 
     # Process the path to extract album information
-    album_info = get_album_info_from_path(track_path)
+    album_string = get_album_string_from_track_path(track_path)
 
     # Check that the album matches the expected pattern
     # If so, extract the year and album name
     album_pattern = re.compile(r'\[(\d{4})\]\s(.+)')
-    match = album_pattern.search(album_info)
+    match = album_pattern.search(album_string)
     if match:
-        logging.info(f"{track_path}: Album info follows the convention. Attempting to extract from file path.")
-        year_recorded, album_info = match.groups()
-        # Then extract the album, orchestra and conductor
-        try:
-            album_info = album_info.split(' (')
-            album = album_info[0]
-            orchestra_conductor = album_info[1].replace(')', '')
-            # If there is an orchestra and conductor, extract them
-            # Examples of album names from which orchestra and conductor can be extracted:
-            # [2022] Water & Fire (B'Rock Orchestra with Dmitry Sinkovsky) - "with" indicates Orchestra with Condudctor
-            # "comma" indicates Orchestra, Conductor or Conductor, Orchestra - depends on the number of words in each split
-            # [1967] 4 Orchestral Suites (Harnoncourt, Concentus Musicus Wien)
-            # [1991] The Brandenburg Concertos (Brandenburg Consort, Goodman)
-            # [2016] Brandenburg Concertos (Capella Savaria) - no delimiter indicates Orchestra
+        album, year_recorded, orchestra, conductor = parse_fields_from_matching_album_string(match)
 
-            # If naming convention is Orchestra with Conductor
-            if 'with' in orchestra_conductor:
-                parts = orchestra_conductor.split('with')
-                orchestra = parts[0].strip()
-                conductor = parts[1].strip()
-            # If naming convention is Orchestra, Conductor or Conductor, Orchestra
-            elif ',' in orchestra_conductor:
-                parts = orchestra_conductor.split(',')
-                # Determine if the split is orchestra, conductor or conductor, orchestra
-                # If the first part is longer, it is the orchestra
-                # Otherwise, it is the conductor
-                len_first = len(parts[0].split())
-                len_second = len(parts[1].split())
-                if len_first > len_second:
-                    orchestra = parts[0]
-                    conductor = parts[1]
-                else:
-                    orchestra = parts[1]
-                    conductor = parts[0]
-            # Otherwise, assume the entire string is the orchestra
-            else:
-                orchestra = orchestra_conductor
-                conductor = None
-        # Otherwise, asusme orchestra and conductor are not present in file path
-        except:
-            album = album_info
-
-    # If the album doesn't match the expected pattern, issue a warning and extract tags from the file
+    # Otherwise, extract tags from the file
     else:
-        logging.info(f"{track_path}: Album info does not follow the convention. Attempting to extract from file tags.")
-        # Extract album, year_recorded, orchestra, conductor
-        audio_file = mutagen.flac.FLAC(track_path)
-        # Album
-        try:
-            album = audio_file['album'][0]
-        except:
-            album = None
-        # Year recorded
-        try:
-            year_recorded = audio_file['year'][0]
-        except:
-            year_recorded = None
-        # Orchestra
-        try:
-            orchestra = audio_file['orchestra'][0]
-        except:
-            orchestra = None
-        # Conductor
-        try:
-            conductor = audio_file['conductor'][0]
-        except:
-            conductor = None
+        album, year_recorded, orchestra, conductor = get_tags_from_file_with_unmatched_album_string(track_path)
 
-    # Obtain disc information if present
-    possible_disc_names = ['Disc', 'Disk', 'CD']
-    disc_pattern = r'(' + '|'.join(possible_disc_names) + r')\s(\d+)'
-    if any(keyword in track_path for keyword in possible_disc_names):
-        disc_match = re.search(disc_pattern, track_path)
-        if disc_match:
-            disc_number = disc_match.group(2)
-    else:
-        disc_number = None
-    
-    return album, year_recorded, orchestra, conductor, disc_number
+    return album, year_recorded, orchestra, conductor
         
+################################################################################
+### Master function to get track- and album-level tags
+################################################################################
 
-
-### Function to get track- and album-level tags
 def get_tags(tags_df):
     """
     Extract tags from file paths and update the dataframe.
@@ -227,11 +297,14 @@ def get_tags(tags_df):
     for track_path in tqdm(tags_df.index, total=total_files, desc="Reading tags"):
 
         # Get album info from path structure
-        album, year_recorded, orchestra, conductor, disc_number = extract_album_info(track_path)
+        album, year_recorded, orchestra, conductor = get_fields_from_album_string(track_path)
         tags_df.loc[track_path, 'Album'] = album
         tags_df.loc[track_path, 'Year Recorded'] = year_recorded
         tags_df.loc[track_path, 'Orchestra'] = orchestra
         tags_df.loc[track_path, 'Conductor'] = conductor
+
+        # Get disc number from path structure
+        disc_number = get_disc_number_from_track_path(track_path)
         tags_df.loc[track_path, 'DiscNumber'] = disc_number
 
         # Extract title for processing
