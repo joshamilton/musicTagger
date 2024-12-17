@@ -8,13 +8,24 @@
 ################################################################################
 import os
 import re
+import logging
 import mutagen
 import mutagen.flac
 import pandas as pd
 from tqdm import tqdm  # For better progress tracking
 
 ################################################################################
+### Setup logging
+################################################################################
+
+# Import the setup_logging function
+from utils import setup_logging
+# Initialize the logger
+logger = setup_logging(os.getcwd())
+
+################################################################################
 ### Define functions
+### Create dataframe to store tags
 ################################################################################
 
 def get_flac_files(search_dir):
@@ -67,6 +78,11 @@ def get_tracks_create_dataframe(search_dir):
     track_path_list = get_flac_files(search_dir)
     return create_tags_dataframe(track_path_list)
 
+################################################################################
+### Define functions
+### Read tags from file paths
+################################################################################
+
 ### Function to extract album info from path
 def get_album_info_from_path(track_path):
     """
@@ -76,14 +92,14 @@ def get_album_info_from_path(track_path):
         track_path (str): Path to the track file.
 
     Returns:
-        str: Album folder name.
+        album_info (str): Album information extracted from the path.
     """
     parts = track_path.split('/')
     
     # Find album folder by walking up from file
     for i in range(len(parts)-1, -1, -1):
         folder = parts[i]
-        if folder.startswith('Disc'):
+        if folder.startswith('Disc') or folder.startswith('Disk') or folder.startswith('CD'):
             # If we hit a Disc folder, use its parent
             if i > 0:
                 return parts[i-1]
@@ -91,6 +107,107 @@ def get_album_info_from_path(track_path):
             # First non-Disc, non-file folder is album
             return folder
     return ''
+
+def extract_album_info(track_path):
+    """
+    Extract album information from the track path
+
+    Args:
+        track_path (str): Path to the track file.
+    
+    Returns:
+        tuple: (album, year_recorded, orchestra, conductor, disc_number)
+    """
+
+    # Process the path to extract album information
+    album_info = get_album_info_from_path(track_path)
+
+    # Check that the album matches the expected pattern
+    # If so, extract the year and album name
+    album_pattern = re.compile(r'\[(\d{4})\]\s(.+)')
+    match = album_pattern.search(album_info)
+    if match:
+        logging.info(f"{track_path}: Album info follows the convention. Attempting to extract from file path.")
+        year_recorded, album_info = match.groups()
+        # Then extract the album, orchestra and conductor
+        try:
+            album_info = album_info.split(' (')
+            album = album_info[0]
+            orchestra_conductor = album_info[1].replace(')', '')
+            # If there is an orchestra and conductor, extract them
+            # Examples of album names from which orchestra and conductor can be extracted:
+            # [2022] Water & Fire (B'Rock Orchestra with Dmitry Sinkovsky) - "with" indicates Orchestra with Condudctor
+            # "comma" indicates Orchestra, Conductor or Conductor, Orchestra - depends on the number of words in each split
+            # [1967] 4 Orchestral Suites (Harnoncourt, Concentus Musicus Wien)
+            # [1991] The Brandenburg Concertos (Brandenburg Consort, Goodman)
+            # [2016] Brandenburg Concertos (Capella Savaria) - no delimiter indicates Orchestra
+
+            # If naming convention is Orchestra with Conductor
+            if 'with' in orchestra_conductor:
+                parts = orchestra_conductor.split('with')
+                orchestra = parts[0].strip()
+                conductor = parts[1].strip()
+            # If naming convention is Orchestra, Conductor or Conductor, Orchestra
+            elif ',' in orchestra_conductor:
+                parts = orchestra_conductor.split(',')
+                # Determine if the split is orchestra, conductor or conductor, orchestra
+                # If the first part is longer, it is the orchestra
+                # Otherwise, it is the conductor
+                len_first = len(parts[0].split())
+                len_second = len(parts[1].split())
+                if len_first > len_second:
+                    orchestra = parts[0]
+                    conductor = parts[1]
+                else:
+                    orchestra = parts[1]
+                    conductor = parts[0]
+            # Otherwise, assume the entire string is the orchestra
+            else:
+                orchestra = orchestra_conductor
+                conductor = None
+        # Otherwise, asusme orchestra and conductor are not present in file path
+        except:
+            album = album_info
+
+    # If the album doesn't match the expected pattern, issue a warning and extract tags from the file
+    else:
+        logging.info(f"{track_path}: Album info does not follow the convention. Attempting to extract from file tags.")
+        # Extract album, year_recorded, orchestra, conductor
+        audio_file = mutagen.flac.FLAC(track_path)
+        # Album
+        try:
+            album = audio_file['album'][0]
+        except:
+            album = None
+        # Year recorded
+        try:
+            year_recorded = audio_file['year'][0]
+        except:
+            year_recorded = None
+        # Orchestra
+        try:
+            orchestra = audio_file['orchestra'][0]
+        except:
+            orchestra = None
+        # Conductor
+        try:
+            conductor = audio_file['conductor'][0]
+        except:
+            conductor = None
+
+    # Obtain disc information if present
+    possible_disc_names = ['Disc', 'Disk', 'CD']
+    disc_pattern = r'(' + '|'.join(possible_disc_names) + r')\s(\d+)'
+    if any(keyword in track_path for keyword in possible_disc_names):
+        disc_match = re.search(disc_pattern, track_path)
+        if disc_match:
+            disc_number = disc_match.group(2)
+    else:
+        disc_number = None
+    
+    return album, year_recorded, orchestra, conductor, disc_number
+        
+
 
 ### Function to get track- and album-level tags
 def get_tags(tags_df):
@@ -103,42 +220,19 @@ def get_tags(tags_df):
     Returns:
         pd.DataFrame: Updated DataFrame with extracted tags.
     """
-    album_pattern = re.compile(r'\[(\d{4})\]\s(.+)')
-    total_files = len(tags_df)
-    
+
+    total_files = len(tags_df)    
     print(f"Processing {total_files} files...")
     
     for track_path in tqdm(tags_df.index, total=total_files, desc="Reading tags"):
 
         # Get album info from path structure
-        album_info = get_album_info_from_path(track_path)
-        
-        # Extract performer info
-        parts = track_path.split('/')
-        soloists_idx = parts.index(album_info) - 1
-        soloists = parts[soloists_idx] if soloists_idx > 0 else ''
-        
-        # Parse album info
-        match = album_pattern.search(album_info)
-        if match:
-            year, album = match.groups()
-        else:
-            year = ''
-            album = album_info
-            
-        # Update tags
-        tags_df.loc[track_path, 'Soloists'] = soloists
+        album, year_recorded, orchestra, conductor, disc_number = extract_album_info(track_path)
         tags_df.loc[track_path, 'Album'] = album
-        tags_df.loc[track_path, 'Year Recorded'] = year
-        
-        # Extract disc number if present
-        if 'Disc' in track_path:
-            disc_match = re.search(r'Disc\s(\d+)', track_path)
-            if disc_match:
-                tags_df.loc[track_path, 'DiscNumber'] = disc_match.group(1)
-                
-        track_number, track_info = track_path.split('/')[-1].replace('.flac', '').split(' - ', 1)
-        tags_df.loc[track_path, 'TrackNumber'] = track_number
+        tags_df.loc[track_path, 'Year Recorded'] = year_recorded
+        tags_df.loc[track_path, 'Orchestra'] = orchestra
+        tags_df.loc[track_path, 'Conductor'] = conductor
+        tags_df.loc[track_path, 'DiscNumber'] = disc_number
 
         # Extract title for processing
         # Enclose in a try block, in case file hasn't already been tagged by me
@@ -207,10 +301,9 @@ def get_tags(tags_df):
             pass
 
         # Update with other fields pulled from the tags
-        # Album, Composer, Genre, Year Recorded
+        # Composer, Genre, Year Recorded
         # Again enclose in a try block, in case file hasn't already been tagged by me
         try:
-            tags_df.loc[track_path, 'Album'] = mutagen.flac.FLAC(track_path)['album'][0]
             tags_df.loc[track_path, 'Composer'] = mutagen.flac.FLAC(track_path)['artist'][0]
             tags_df.loc[track_path, 'Genre'] = mutagen.flac.FLAC(track_path)['genre'][0]
             tags_df.loc[track_path, 'Year Recorded'] = mutagen.flac.FLAC(track_path)['date'][0]
