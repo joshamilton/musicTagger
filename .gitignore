@@ -1,8 +1,9 @@
-.DS_Store
-.vscode
 *.xlsx
+.DS_Store
+.coverage
+.vscode
 __pycache__
 extra_functions.py
+logs
 old_functions.py
 prompts.txt
-logs
