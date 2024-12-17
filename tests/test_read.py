@@ -7,7 +7,7 @@ from src.read import (
                     get_album_string_from_track_path, get_disc_number_from_track_path,
                     parse_performer_string, parse_fields_from_matching_album_string,
                     get_tags_from_file_with_unmatched_album_string, 
-                    get_fields_from_album_string,
+                    get_album_fields_from_track_path,
                     # Process track string:
                     # Read remaining tags: composer, genre
                     get_genre_composer_tags_from_file
@@ -139,10 +139,10 @@ def test_parse_fields_from_matching_album_string(album_match):
     result = parse_fields_from_matching_album_string(album_match)
     assert result == ("Album", "2024", "Orchestra", "Conductor")
 
-# Integration test for get_fields_from_album_string
-def test_get_fields_from_album_string_matching_pattern():    
+# Integration test for get_album_fields_from_track_path
+def test_get_album_fields_from_track_path_matching_pattern():    
     path = "/path/to/Genre/Composer/[2024] Album (Orchestra with Conductor)/01 - Track.flac"
-    result = get_fields_from_album_string(path)
+    result = get_album_fields_from_track_path(path)
     assert result == ("Album", "2024", "Orchestra", "Conductor")
 
 def test_get_tags_from_file_with_unmatched_album_string(mocker):
@@ -160,20 +160,20 @@ def test_get_tags_from_file_with_unmatched_album_string(mocker):
     mocker.patch('mutagen.flac.FLAC', return_value=mock_flac)
 
     path = "/path/to/Genre/Composer/Album/01 - Track.flac"
-    result = get_fields_from_album_string(path)
+    result = get_album_fields_from_track_path(path)
     assert result == ("Album", "2024", "Orchestra", "Conductor")
 
-# Integration test for get_fields_from_album_string
+# Integration test for get_album_fields_from_track_path
 # Only need to test one matched example because parse_performer_string has already been tested
-def test_get_fields_from_album_string_matched():
+def test_get_album_fields_from_track_path_matched():
     path = "/path/to/Genre/Composer/[2024] Album (Orchestra with Conductor)/Disc 1/01 - Track.flac"
-    title, year, orchestra, conductor = get_fields_from_album_string(path)
+    title, year, orchestra, conductor = get_album_fields_from_track_path(path)
     assert title == "Album"
     assert year == "2024"
     assert orchestra == "Orchestra"
     assert conductor == "Conductor"
 
-def test_get_fields_from_album_string_unmatched(mocker):
+def test_get_album_fields_from_track_path_unmatched(mocker):
     # Use mocking because 1) test FLAC file doesn't exist, 2) don't want to test mutagen
     # Mock FLAC audio file
     mock_flac = mocker.MagicMock()
@@ -188,7 +188,7 @@ def test_get_fields_from_album_string_unmatched(mocker):
     mocker.patch('mutagen.flac.FLAC', return_value=mock_flac)
 
     path = "/path/to/Genre/Composer/Album/01 - Track.flac"
-    title, year, orchestra, conductor = get_fields_from_album_string(path)
+    title, year, orchestra, conductor = get_album_fields_from_track_path(path)
     assert title == "Album"
     assert year == "2024"
     assert orchestra == "Orchestra"

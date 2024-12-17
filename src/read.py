@@ -249,7 +249,7 @@ def get_tags_from_file_with_unmatched_album_string(track_path):
 # Master function that integrates the above functions: get_album_string_from_track_path, 
 # get_disc_number_from_track_path, parse_fields_from_matching_album_string, 
 # get_tags_from_file_with_unmatched_album_string
-def get_fields_from_album_string(track_path):
+def get_album_fields_from_track_path(track_path):
     """
     Extract album information from the track path
 
@@ -277,11 +277,194 @@ def get_fields_from_album_string(track_path):
     return album, year_recorded, orchestra, conductor
 
 ################################################################################
-### Process track string: Parse album string into fields: track_number, work,
-### work_number, initial_key, catalog_number, opus, opus_number, epithet, movement
+### Process track tag: Parse title tag into fields: work, work_number, 
+### initial_key, catalog_number, opus, opus_number, epithet, movement
 ### OR extract from file tags
 ################################################################################
 
+def parse_fields_from_title_tag(track_path):
+    """
+    Extract track info from the track_path.
+
+    Falls back to reading metadata directly from audio file tags when the track string
+    doesn't follow the expected naming convention.
+    
+    Args:
+        track_path (str): Path to the FLAC audio file
+        
+    Returns:
+        tuple: track_number, work, work_number, initial_key, catalog_number, opus, opus_number, epithet, movement
+            
+    Note:
+        Any tag that cannot be read will return None for that field
+    """
+
+    logging.info(f"{track_path}: Track tag exists. Attempting to extract fields from title tag.")
+
+    audio_file = mutagen.flac.FLAC(track_path)
+    work = audio_file['title'][0]
+
+    # Attempt to parse the track string. The hand-tagged format of the 'title' tag is:
+    # Work, Work Number, in Initial Key, 'Epithet', Catalog #, Opus, Opus Number - I. Movement
+
+    # MOVEMENT - will follow a hyphen and begin with a Roman numeral. Occurs at the end of the string
+    work_match = re.search(r'(.+)\s-\s([IVXLCDM]+?\.\s.+)', work)
+    if work_match:
+        work = work_match.group(1)
+        movement = work_match.group(2)
+    else:
+        movement = None
+    # Now looks like: Work, Work Number, in Initial Key, 'Epithet', Catalog #, Opus, Opus Number
+
+    # EPITHET - will be in quotes, preceding comma may be optional
+    # If trailing comma is present, needs to be stripped
+    epithet_match = re.search(r'(.+),?\s\'(.+)\'', work)
+    if epithet_match:
+        work = epithet_match.group(1)
+        if work.endswith(','):
+            work = work.rstrip(',')
+        epithet = epithet_match.group(2)
+    else:
+        epithet = None
+    # Now looks like: Work, Work Number in Initial Key, Catalog #, Opus, Opus Number
+
+    # NUMBER - begins with NO // OPUS - begins with Op
+    # Either, or, both, or neither may be present
+    both_match = re.search(r'(.+)\s(No\s\d+),*\s(Op\s\d+)\s(No\s\d+)(.*)', work)
+    opus_match = re.search(r'(.+),\s(Op\s\d+)(.*)', work)
+    num_match = re.search(r'(.+),\s(No\s\d+)(.*)', work)
+    # Check for both - opus # and work #
+    if both_match:
+        work = both_match.group(1) + both_match.group(5)
+        work_number = both_match.group(2)
+        opus = both_match.group(3)
+        opus_number = both_match.group(4)
+    # Check for Opus only - opus #
+    elif opus_match:
+        work = opus_match.group(1) + opus_match.group(3)
+        opus_number = opus_match.group(2)
+    # Check for No only - work #
+    elif num_match:
+        work = num_match.group(1) + num_match.group(3)
+        work_number = num_match.group(2)
+    # Neither
+    else:
+        opus = None
+        opus_number = None
+        work_number = None
+    # Now looks like: Work in Initial Key, Catalog #
+
+    # CATALOG # - variable. But with OPUS, NUMBER, NAME, MOVEMENT all removed, CATALOG # should be what remains after the final comma
+    # Check that CATALOG # ends with a digit to avoid WORKs with commas in the name, but with out CATALOG #
+    catalog_match = re.search(r'(.+),(.+\d$)', work)
+    if catalog_match:
+        work = catalog_match.group(1)
+        catalog_number = catalog_match.group(2).strip() # remove whitespace from preceding comma
+    else:
+        catalog_number = None
+    # Now looks like: Work in Initial Key
+
+    # INITIALKEY - begins with valid keys (A through G) and terminates (major key) or indicates minor key (ends with minor, or -flat, or -sharp)
+    # This avoids tiltes with ' in ' in them
+    key_match = re.search(r'(.+)\sin\s([A-G]$|[A-G]\sminor|[A-G]-flat|[A-G]-sharp)', work)
+    if key_match:
+        work = key_match.group(1)
+        initial_key = key_match.group(2)
+    else:
+        initial_key = None
+    # Now looks like: Work
+
+    # WORK - whatever remains. Strip trailing comma if necessary
+    if work.endswith(','):
+        work = work.rstrip(',')
+    
+    return work, work_number, initial_key, catalog_number, opus, opus_number, epithet, movement
+    
+def get_tags_from_file_without_title_tag(track_path):
+
+    logging.info(f"{track_path}: Track tag does not exist. Attempting to extract from file tags.")
+
+    # Extract album, year_recorded, orchestra, conductor
+    audio_file = mutagen.flac.FLAC(track_path)
+    # Track number
+    try:
+        track_number = audio_file['tracknumber'][0]
+    except:
+        track_number = None
+    # Work
+    try:
+        work = audio_file['title'][0]
+    except:
+        work = None
+    # Work number
+    try:
+        work_number = audio_file['work number'][0]
+    except:
+        work_number = None
+    # Initial key
+    try:
+        initial_key = audio_file['initialkey'][0]
+    except:
+        initial_key = None
+    # Catalog number
+    try:
+        catalog_number = audio_file['catalog #'][0]
+    except:
+        catalog_number = None
+    # Opus
+    try:
+        opus = audio_file['opus'][0]
+    except:
+        opus = None
+    # Opus number
+    try:
+        opus_number = audio_file['opus number'][0]
+    except:
+        opus_number = None
+    # Epithet
+    try:
+        epithet = audio_file['epithet'][0]
+    except:
+        epithet = None
+    # Movement
+    try:
+        movement = audio_file['movement'][0]
+    except:
+        movement = None
+
+    return work, work_number, initial_key, catalog_number, opus, opus_number, epithet, movement
+
+# Master function that integrates the above functions: get_track_string_from_track_path, 
+# parse_fields_from_matching_track_string, get_tags_from_file_with_unmatched_track_string
+def get_track_fields_from_track_path(track_path):
+    """
+    Extract track information from the track path
+
+    Args:
+        track_path (str): Path to the track file.
+    
+    Returns:
+        tuple: (track_number, work, work_number, initial_key, catalog_number, opus, opus_number, epithet, movement)
+    """
+
+    # Attempt to read the title string:
+    audio_file = mutagen.flac.FLAC(track_path)
+    # If it exists, extract tags from the title tag. Falling back to reading tags directly from the file if necessary
+    if audio_file['tracknumber'][0]:
+        work, work_number, initial_key, catalog_number, opus, \
+            opus_number, epithet, movement = parse_fields_from_title_tag(track_path)
+    # Otherwise, extract tags directly from the file
+    else:
+        work, work_number, initial_key, catalog_number, opus, \
+            opus_number, epithet, movement = get_tags_from_file_without_title_tag(track_path)
+    # Finally, read the track number from the 'tracknumber' tag
+    try:
+        track_number = audio_file['tracknumber'][0]
+    except:
+        track_number = None
+
+    return track_number, work, work_number, initial_key, catalog_number, opus, \
+            opus_number, epithet, movement
 
 ################################################################################
 ### Read remaining tags: composer, genre
@@ -337,7 +520,7 @@ def get_tags(tags_df):
     for track_path in tqdm(tags_df.index, total=total_files, desc="Reading tags"):
 
         # Get album info from path structure
-        album, year_recorded, orchestra, conductor = get_fields_from_album_string(track_path)
+        album, year_recorded, orchestra, conductor = get_album_fields_from_track_path(track_path)
         tags_df.loc[track_path, 'Album'] = album
         tags_df.loc[track_path, 'Year Recorded'] = year_recorded
         tags_df.loc[track_path, 'Orchestra'] = orchestra
@@ -346,71 +529,20 @@ def get_tags(tags_df):
         # Get disc number from path structure
         disc_number = get_disc_number_from_track_path(track_path)
         tags_df.loc[track_path, 'DiscNumber'] = disc_number
-
-        # Extract title for processing
-        # Enclose in a try block, in case file hasn't already been tagged by me
-        try:
-            work = mutagen.flac.FLAC(track_path)['title'][0]
-            tags_df.loc[track_path, 'Title'] = work
-            # Process title into new fields
-            work_match = re.search(r'(.+)\s-\s([IVXLCDM]+?\.\s.+)', work)
-            if work_match:
-                work = work_match.group(1)
-                movement = work_match.group(2)
-                tags_df.loc[track_path, 'Movement'] = movement
-            # NAME - will be in quotes, preceding comma may be optional
-            # If trailing comma is present, needs to be stripped
-            name_match = re.search(r'(.+),?\s\'(.+)\'', work)
-            if name_match:
-                work = name_match.group(1)
-                if work.endswith(','):
-                    work = work.rstrip(',')
-                name = name_match.group(2)
-                tags_df.loc[track_path, 'Epithet'] = name
-            # NUMBER - begins with NO // OPUS - begins with Op
-            # Either, or, both, or neither may be present
-            both_match = re.search(r'(.+),*\s(Op\s\d+)\s(No\s\d+)(.*)', work)
-            opus_match = re.search(r'(.+),\s(Op\s\d+)(.*)', work)
-            num_match = re.search(r'(.+),\s(No\s\d+)(.*)', work)
-            # Check for both - opus # and work #
-            if both_match:
-                work = both_match.group(1) + both_match.group(4)
-                opus = both_match.group(2)
-                number = both_match.group(3)
-                tags_df.loc[track_path, 'Opus'] = opus
-                tags_df.loc[track_path, 'Opus Number'] = number
-            # Check for Opus only - opus #
-            elif opus_match:
-                work = opus_match.group(1) + opus_match.group(3)
-                opus = opus_match.group(2)
-                tags_df.loc[track_path, 'Opus'] = opus
-            # Check for No only - work #
-            elif num_match:
-                work = num_match.group(1) + num_match.group(3)
-                number = num_match.group(2)
-                tags_df.loc[track_path, 'Work Number'] = number
-            # CATALOG # - variable. But with OPUS, NUMBER, NAME, MOVEMENT all removed, CATALOG # should be what remains after the final comma
-            # Check that CATALOG # ends with a digit to avoid WORKs with commas in the name, but with out CATALOG #
-            catalog_match = re.search(r'(.+),(.+\d$)', work)
-            if catalog_match:
-                work = catalog_match.group(1)
-                catalog = catalog_match.group(2).strip() # remove whitespace from preceding comma
-                tags_df.loc[track_path, 'Catalog #'] = catalog
-            # INITIALKEY - begins with valid keys (A through G) and terminates (major key) or indicates minor key (ends with minor, or -flat, or -sharp)
-            # This avoids tiltes with ' in ' in them
-            key_match = re.search(r'(.+)\sin\s([A-G]$|[A-G]\sminor|[A-G]-flat|[A-G]-sharp)', work)
-            if key_match:
-                work = key_match.group(1)
-                key = key_match.group(2)
-                tags_df.loc[track_path, 'InitialKey'] = key
-            # WORK - whatever remains. Strip trailing comma if necessary
-            if work.endswith(','):
-                tags_df.loc[track_path, 'Work'] = work.rstrip(',')
-            else:
-                tags_df.loc[track_path, 'Work'] = work
-        except:
-            pass
-
+        
+        # Get track info from path structure
+        track_number, work, work_number, initial_key, catalog_number, opus, \
+            opus_number, epithet, movement = get_track_fields_from_track_path(track_path)
+        tags_df.loc[track_path, 'TrackNumber'] = track_number
+        tags_df.loc[track_path, 'Work'] = work
+        tags_df.loc[track_path, 'Work Number'] = work_number
+        tags_df.loc[track_path, 'InitialKey'] = initial_key
+        tags_df.loc[track_path, 'Catalog #'] = catalog_number
+        tags_df.loc[track_path, 'Opus'] = opus
+        tags_df.loc[track_path, 'Opus Number'] = opus_number
+        tags_df.loc[track_path, 'Epithet'] = epithet
+        tags_df.loc[track_path, 'Movement'] = movement
+    
         # Get genre and composer from file tags
         genre, composer = get_genre_composer_tags_from_file(track_path)
         tags_df.loc[track_path, 'Genre'] = genre
