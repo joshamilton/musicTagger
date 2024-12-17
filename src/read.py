@@ -282,41 +282,34 @@ def get_album_fields_from_track_path(track_path):
 ### OR extract from file tags
 ################################################################################
 
-def parse_fields_from_title_tag(track_path):
+def parse_movement_from_title(work):
     """
-    Extract track info from the track_path.
+    Extract movement from a work title string.
 
-    Falls back to reading metadata directly from audio file tags when the track string
-    doesn't follow the expected naming convention.
-    
     Args:
-        track_path (str): Path to the FLAC audio file
-        
+        work (str): Work title string to parse
+
     Returns:
-        tuple: track_number, work, work_number, initial_key, catalog_number, opus, opus_number, epithet, movement
-            
-    Note:
-        Any tag that cannot be read will return None for that field
+        tuple: (work_without_movement, movement), where movement may be None
     """
-
-    logging.info(f"{track_path}: Track tag exists. Attempting to extract fields from title tag.")
-
-    audio_file = mutagen.flac.FLAC(track_path)
-    work = audio_file['title'][0]
-
-    # Attempt to parse the track string. The hand-tagged format of the 'title' tag is:
-    # Work, Work Number, in Initial Key, 'Epithet', Catalog #, Opus, Opus Number - I. Movement
-
-    # MOVEMENT - will follow a hyphen and begin with a Roman numeral. Occurs at the end of the string
     work_match = re.search(r'(.+)\s-\s([IVXLCDM]+?\.\s.+)', work)
     if work_match:
         work = work_match.group(1)
         movement = work_match.group(2)
     else:
         movement = None
-    # Now looks like: Work, Work Number, in Initial Key, 'Epithet', Catalog #, Opus, Opus Number
+    return work, movement
 
-    # EPITHET - will be in quotes, preceding comma may be optional
+def parse_epithet_from_title(work):
+    """
+    Extract epithet from a work title string.
+
+    Args:
+        work (str): Work title string to parse
+
+    Returns:
+        tuple: (work_without_epithet, epithet), where epithet may be None
+    """
     # If trailing comma is present, needs to be stripped
     epithet_match = re.search(r'(.+),?\s\'(.+)\'', work)
     if epithet_match:
@@ -326,9 +319,18 @@ def parse_fields_from_title_tag(track_path):
         epithet = epithet_match.group(2)
     else:
         epithet = None
-    # Now looks like: Work, Work Number in Initial Key, Catalog #, Opus, Opus Number
+    return work, epithet
 
-    # NUMBER - begins with NO // OPUS - begins with Op
+def parse_opus_opusnumber_worknumber_from_title(work):
+    """
+    Extract opus, opus number, and work number from a work title string.
+
+    Args:
+        work (str): Work title string to parse
+
+    Returns:
+        tuple: (work_without_opus, work_number, opus, opus_number), where any field may be None
+    """
     # Either, or, both, or neither may be present
     both_match = re.search(r'(.+)\s(No\s\d+),*\s(Op\s\d+)\s(No\s\d+)(.*)', work)
     opus_match = re.search(r'(.+),\s(Op\s\d+)(.*)', work)
@@ -352,9 +354,18 @@ def parse_fields_from_title_tag(track_path):
         opus = None
         opus_number = None
         work_number = None
-    # Now looks like: Work in Initial Key, Catalog #
+    return work, work_number, opus, opus_number
 
-    # CATALOG # - variable. But with OPUS, NUMBER, NAME, MOVEMENT all removed, CATALOG # should be what remains after the final comma
+def parse_catalog_from_title(work):
+    """
+    Extract catalog number from a work title string.
+
+    Args:
+        work (str): Work title string to parse
+
+    Returns:
+        tuple: (work_without_catalog, catalog_number), where catalog_number may be None
+    """
     # Check that CATALOG # ends with a digit to avoid WORKs with commas in the name, but with out CATALOG #
     catalog_match = re.search(r'(.+),(.+\d$)', work)
     if catalog_match:
@@ -362,16 +373,88 @@ def parse_fields_from_title_tag(track_path):
         catalog_number = catalog_match.group(2).strip() # remove whitespace from preceding comma
     else:
         catalog_number = None
-    # Now looks like: Work in Initial Key
+    return work, catalog_number
 
-    # INITIALKEY - begins with valid keys (A through G) and terminates (major key) or indicates minor key (ends with minor, or -flat, or -sharp)
-    # This avoids tiltes with ' in ' in them
+def parse_initialkey_from_title(work):
+    """
+    Extract key signature from a work title string.
+
+    Args:
+        work (str): Work title string to parse
+
+    Returns:
+        tuple: (work_without_key, key), where key may be None
+    """
+    # This avoids titles with ' in ' in them
     key_match = re.search(r'(.+)\sin\s([A-G]$|[A-G]\sminor|[A-G]-flat|[A-G]-sharp)', work)
     if key_match:
         work = key_match.group(1)
         initial_key = key_match.group(2)
     else:
         initial_key = None
+    return work, initial_key
+    
+def parse_fields_from_title_tag(track_path):
+    """
+    Extract track info from the track_path.
+
+    Falls back to reading metadata directly from audio file tags when the track string
+    doesn't follow the expected naming convention.
+
+    The function assumes the 'title' tag follows the hand-tagged format:
+    Work, Work Number, in Initial Key, 'Epithet', Catalog #, Opus, Opus Number - I. Movement
+
+    First, the movement is extracted from the end of the string, leaving:
+    Work, Work Number, in Initial Key, 'Epithet', Catalog #, Opus, Opus Number
+
+    Then, the epithet is extracted from the string, leaving:
+    Work, Work Number in Initial Key, Catalog #, Opus, Opus Number
+
+    Then, the work number, opus, and opus number are extracted, leaving:
+    Work in Initial Key, Catalog #
+    
+    Then, the catalog number is extracted, leaving:
+    Work in Initial Key
+
+    Finally, the initial key is extracted, leaving:
+    Work
+
+    Args:
+        track_path (str): Path to the FLAC audio file
+        
+    Returns:
+        tuple: track_number, work, work_number, initial_key, catalog_number, opus, opus_number, epithet, movement
+            
+    Note:
+        Any tag that cannot be read will return None for that field
+    """
+
+    logging.info(f"{track_path}: Track tag exists. Attempting to extract fields from title tag.")
+
+    audio_file = mutagen.flac.FLAC(track_path)
+    work = audio_file['title'][0]
+
+    # Attempt to parse the track string. The hand-tagged format of the 'title' tag is:
+    
+
+    # MOVEMENT - will follow a hyphen and begin with a Roman numeral. Occurs at the end of the string
+    work, movement = parse_movement_from_title(work)
+    # Now looks like: Work, Work Number, in Initial Key, 'Epithet', Catalog #, Opus, Opus Number
+
+    # EPITHET - will be in quotes, preceding comma may be optional
+    work, epithet = parse_epithet_from_title(work)
+    # Now looks like: Work, Work Number in Initial Key, Catalog #, Opus, Opus Number
+
+    # NUMBER - begins with NO // OPUS - begins with Op
+    work, work_number, opus, opus_number = parse_opus_opusnumber_worknumber_from_title(work)
+    # Now looks like: Work in Initial Key, Catalog #
+
+    # CATALOG # - variable. But with OPUS, NUMBER, NAME, MOVEMENT all removed, CATALOG # should be what remains after the final comma
+    work, catalog_number = parse_catalog_from_title(work)
+    # Now looks like: Work in Initial Key
+
+    # INITIALKEY - begins with valid keys (A through G) and terminates (major key) or indicates minor key (ends with minor, or -flat, or -sharp)
+    work, initial_key = parse_initialkey_from_title(work)
     # Now looks like: Work
 
     # WORK - whatever remains. Strip trailing comma if necessary
