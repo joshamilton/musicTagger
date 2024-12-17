@@ -117,7 +117,7 @@ def get_disc_number_from_track_path(track_path):
         disc_number (str): Disc number extracted from the album information.
     """
     possible_disc_names = ['Disc', 'Disk', 'CD']
-    disc_pattern = r'(' + '|'.join(possible_disc_names) + r')\s(\d+)'
+    disc_pattern = r'(' + '|'.join(possible_disc_names) + r')\s?(\d+)'
     if any(keyword in track_path for keyword in possible_disc_names):
         disc_match = re.search(disc_pattern, track_path)
         if disc_match:
@@ -160,11 +160,11 @@ def parse_performer_string(orchestra_conductor_string):
         len_first = len(parts[0].split())
         len_second = len(parts[1].split())
         if len_first > len_second:
-            orchestra = parts[0]
-            conductor = parts[1]
+            orchestra = parts[0].strip()
+            conductor = parts[1].strip()
         else:
-            orchestra = parts[1]
-            conductor = parts[0]
+            orchestra = parts[1].strip()
+            conductor = parts[0].strip()
     # Otherwise, assume the entire string is the orchestra
     else:
         orchestra = orchestra_conductor_string
@@ -218,7 +218,7 @@ def get_tags_from_file_with_unmatched_album_string(track_path):
     Note:
         Any tag that cannot be read will return None for that field
     """
-    
+
     logging.info(f"{track_path}: Album info does not follow the convention. Attempting to extract from file tags.")
     # Extract album, year_recorded, orchestra, conductor
     audio_file = mutagen.flac.FLAC(track_path)
