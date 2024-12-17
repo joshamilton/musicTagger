@@ -7,7 +7,10 @@ from src.read import (
                     get_album_string_from_track_path, get_disc_number_from_track_path,
                     parse_performer_string, parse_fields_from_matching_album_string,
                     get_tags_from_file_with_unmatched_album_string, 
-                    get_fields_from_album_string
+                    get_fields_from_album_string,
+                    # Process track string:
+                    # Read remaining tags: composer, genre
+                    get_genre_composer_tags_from_file
                     )
 import re
 
@@ -190,3 +193,61 @@ def test_get_fields_from_album_string_unmatched(mocker):
     assert year == "2024"
     assert orchestra == "Orchestra"
     assert conductor == "Conductor"
+
+
+################################################################################
+### Tests for functions associated with
+### Process track string
+################################################################################
+
+
+################################################################################
+### Tests for functions associated with
+### Read remaining tags: composer, genre
+################################################################################
+
+def test_get_genre_composer_tags_from_file_both_tags(mocker):
+    # Use mocking because 1) test FLAC file doesn't exist, 2) don't want to test mutagen
+    # Mock FLAC audio file
+    mock_flac = mocker.MagicMock()
+    mock_flac.__getitem__.side_effect = lambda x: {
+        'genre': ['Genre'],
+        'composer': ['Composer']
+    }[x]
+    
+    # Mock mutagen.flac.FLAC
+    mocker.patch('mutagen.flac.FLAC', return_value=mock_flac)
+
+    path = "/path/to/Genre/Composer/Album/01 - Track.flac"
+    result = get_genre_composer_tags_from_file(path)
+    assert result == ("Genre", "Composer")
+
+def test_get_genre_composer_tags_from_file_genre_only(mocker):
+    # Use mocking because 1) test FLAC file doesn't exist, 2) don't want to test mutagen
+    # Mock FLAC audio file
+    mock_flac = mocker.MagicMock()
+    mock_flac.__getitem__.side_effect = lambda x: {
+        'genre': ['Genre'],
+    }[x]
+    
+    # Mock mutagen.flac.FLAC
+    mocker.patch('mutagen.flac.FLAC', return_value=mock_flac)
+
+    path = "/path/to/Genre/Composer/Album/01 - Track.flac"
+    result = get_genre_composer_tags_from_file(path)
+    assert result == ("Genre", None)
+
+def test_get_genre_composer_tags_from_file_composer_only(mocker):
+    # Use mocking because 1) test FLAC file doesn't exist, 2) don't want to test mutagen
+    # Mock FLAC audio file
+    mock_flac = mocker.MagicMock()
+    mock_flac.__getitem__.side_effect = lambda x: {
+        'composer': ['Composer'],
+    }[x]
+    
+    # Mock mutagen.flac.FLAC
+    mocker.patch('mutagen.flac.FLAC', return_value=mock_flac)
+
+    path = "/path/to/Genre/Composer/Album/01 - Track.flac"
+    result = get_genre_composer_tags_from_file(path)
+    assert result == (None, "Composer")

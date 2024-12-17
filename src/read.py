@@ -126,7 +126,8 @@ def get_disc_number_from_track_path(track_path):
 
 ################################################################################
 ### Process album string: Parse album string into fields: album, year_recorded, 
-### orchestra, conductor or extract from file tags
+### orchestra, conductor
+### OR extract from file tags
 ################################################################################
 
 def parse_performer_string(orchestra_conductor_string):
@@ -245,7 +246,6 @@ def get_tags_from_file_with_unmatched_album_string(track_path):
 
     return album, year_recorded, orchestra, conductor
 
-    
 # Master function that integrates the above functions: get_album_string_from_track_path, 
 # get_disc_number_from_track_path, parse_fields_from_matching_album_string, 
 # get_tags_from_file_with_unmatched_album_string
@@ -275,7 +275,47 @@ def get_fields_from_album_string(track_path):
         album, year_recorded, orchestra, conductor = get_tags_from_file_with_unmatched_album_string(track_path)
 
     return album, year_recorded, orchestra, conductor
+
+################################################################################
+### Process track string: Parse album string into fields: track_number, work,
+### work_number, initial_key, catalog_number, opus, opus_number, epithet, movement
+### OR extract from file tags
+################################################################################
+
+
+################################################################################
+### Read remaining tags: composer, genre
+################################################################################
+
+def get_genre_composer_tags_from_file(track_path):
+    """
+    Extract track metadata from FLAC file tags
+    
+    Args:
+        track_path (str): Path to the FLAC audio file
         
+    Returns:
+        tuple: (genre, composer)
+            
+    Note:
+        Any tag that cannot be read will return None for that field
+    """
+
+    # Extract genre, composer
+    audio_file = mutagen.flac.FLAC(track_path)
+    # Album
+    try:
+        genre = audio_file['genre'][0]
+    except:
+        genre = None
+    # Year recorded
+    try:
+        composer = audio_file['composer'][0]
+    except:
+        composer = None
+
+    return genre, composer
+
 ################################################################################
 ### Master function to get track- and album-level tags
 ################################################################################
@@ -368,20 +408,13 @@ def get_tags(tags_df):
                 tags_df.loc[track_path, 'Work'] = work.rstrip(',')
             else:
                 tags_df.loc[track_path, 'Work'] = work
-            # Update with year recorded, pulled from tag
-            tags_df.loc[track_path, 'Year Recorded'] = mutagen.flac.FLAC(track_path)['date'][0]
         except:
             pass
 
-        # Update with other fields pulled from the tags
-        # Composer, Genre, Year Recorded
-        # Again enclose in a try block, in case file hasn't already been tagged by me
-        try:
-            tags_df.loc[track_path, 'Composer'] = mutagen.flac.FLAC(track_path)['artist'][0]
-            tags_df.loc[track_path, 'Genre'] = mutagen.flac.FLAC(track_path)['genre'][0]
-            tags_df.loc[track_path, 'Year Recorded'] = mutagen.flac.FLAC(track_path)['date'][0]
-        except:
-            pass
+        # Get genre and composer from file tags
+        genre, composer = get_genre_composer_tags_from_file(track_path)
+        tags_df.loc[track_path, 'Genre'] = genre
+        tags_df.loc[track_path, 'Composer'] = composer
 
     return tags_df
 
