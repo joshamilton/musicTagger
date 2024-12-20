@@ -81,28 +81,49 @@ This will:
 ### Tag Fields
 The utility manages the following tag fields:
 
-- Album
-- Composer
-- Genre
-- Year Recorded
-- Orchestra
-- Conductor
-- Soloists
-- Arranger
-- Disc Number
-- Track Number
-- Title
-- Track Title
-- Work
-- Work Number
-- Initial Key
-- Catalog Number
-- Opus
-- Opus Number
-- Epithet
-- Movement
+#### Work Metadata
+- Work: The main musical work (e.g. "Symphony", "String Quartet")
+- Work Number: Numerical designation (e.g. "No 41")
+- Initial Key: Key signature (e.g. "C major", "E-flat")
+- Catalog Number: Standard catalog reference (e.g. "K 551", "BWV 1046")
+- Opus: Opus designation (e.g. "Op 55")
+- Opus Number: Sub-designation within opus (e.g. "No 1")
+- Epithet: Common name (e.g. "Jupiter", "Eroica")
+- Movement: Movement number and tempo (e.g. "I. Allegro con brio")
+- Title: Full title constructed according to the following pattern: 
+  
+  \<Work\> \<Work Number\>, \<Catalog Number\>, \<Opus\>, \<Opus Number\>, in \<Initial Key\>, '\<Epithet\>' - \<Movement\>
+
+#### Recording Metadata
+- Album: Full album title
+- Year Recorded: Recording year
+- Orchestra: Performing ensemble
+- Conductor: Conductor name
+- Composer: Composer name
+- Genre: Musical period/style
+- Disc Number: For multi-disc sets
+- Track Number: Position on disc
+
 
 ### Error Handling
 - Failed tag operations are logged to a separate Excel file
 - The utility preserves the original tags if an update operation fails
 - Unicode characters are properly handled using the XLSXWriter engine
+
+## Testing
+The codebase includes comprehensive unit tests using pytest. Tests cover:
+
+- Tag parsing from file paths and FLAC metadata
+- Album metadata extraction from paths and tags
+- Track metadata parsing including:
+  - Movement parsing
+  - Epithet extraction 
+  - Opus/catalog number handling
+  - Key signature detection
+  - Work and movement titles
+- Error handling and edge cases
+- DataFrame operations
+
+Run tests with:
+```bash
+pytest
