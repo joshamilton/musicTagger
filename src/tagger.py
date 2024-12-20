@@ -3,12 +3,21 @@
 ### Copyright (c) 2024, Joshua J Hamilton
 ################################################################################
 
+################################################################################
+### Import packages
+################################################################################
+
 import argparse
 import os
 import sys
 import pandas as pd
 import read
 import write
+from predict import DataManager
+
+################################################################################
+### Define functions
+################################################################################
 
 def validate_inputs(args):
     """
@@ -47,12 +56,20 @@ def main():
     """Command-line utility to read or write tags from/to music files"""
 
     parser = argparse.ArgumentParser(description='Classical music file tagger')
-    parser.add_argument('mode', choices=['read', 'write'], help='Operation mode: read tags or write tags')
-    parser.add_argument('--dir', '-d', required=False, help='Directory containing music files')
-    parser.add_argument('--excel_in', '-i', required=False, help='Excel file path for reading tag information')
-    parser.add_argument('--excel_out', '-o', required=True, help='Excel file path for writing tag information')
+    parser.add_argument('mode', choices=['read', 'write'], 
+                        help='Operation mode: read tags or write tags')
+    parser.add_argument('--dir', '-d', required=False, 
+                        help='Directory containing music files')
+    parser.add_argument('--excel_in', '-i', required=False, 
+                        help='Excel file path for reading tag information')
+    parser.add_argument('--excel_out', '-o', required=True, 
+                        help='Excel file path for writing tag information')
+    parser.add_argument('--store_data', action='store_true', 
+                       help='Archive tag data during operations')
 
     args = parser.parse_args()
+
+    data_mgr = DataManager() if args.store_data else None
 
     try:
         # Validate inputs
@@ -61,7 +78,7 @@ def main():
         if args.mode == 'read':
             # Create dataframe and get tags
             tags_df = read.get_tracks_create_dataframe(args.dir)
-            tags_df = read.get_tags(tags_df)
+            tags_df = read.get_tags(tags_df, data_mgr)
             # Use XLSXwriter engine to allow for foreign-language characters
             tags_df.to_excel(args.excel_out, engine = 'xlsxwriter')
             print(f"Tags saved to {args.excel_out}")
@@ -70,7 +87,7 @@ def main():
             # Read tags from Excel and update files
             tags_df = pd.read_excel(args.excel_in, dtype=str, index_col=0)
             tags_df = tags_df.fillna('')
-            successful_df, failed_df = write.update_tags(tags_df)
+            successful_df, failed_df = write.update_tags(tags_df, data_mgr)
             # Use XLSXwriter engine to allow for foreign-language characters
             failed_df.to_excel(args.excel_out, engine = 'xlsxwriter')
             print(f"Failed tags saved to {args.excel_out}")

@@ -611,7 +611,7 @@ def get_genre_composer_tags_from_file(track_path):
 ### Master function to get track- and album-level tags
 ################################################################################
 
-def get_tags(tags_df):
+def get_tags(tags_df, data_mgr = None):
     """
     Extract tags from file paths and update the dataframe.
 
@@ -626,6 +626,12 @@ def get_tags(tags_df):
     print(f"Processing {total_files} files...")
     
     for track_path in tqdm(tags_df.index, total=total_files, desc="Reading tags"):
+
+        # If data_mgr is provided, read and store all audio tags
+        if data_mgr:
+            audio_file = mutagen.flac.FLAC(track_path)
+            all_tags = dict(audio_file.tags)
+            data_mgr.store_original(track_path, all_tags)
 
         # Get album info from path structure
         album, year_recorded, orchestra, conductor = get_album_fields_from_track_path(track_path)
