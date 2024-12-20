@@ -310,10 +310,11 @@ def parse_epithet_from_title(work):
     Returns:
         tuple: (work_without_epithet, epithet), where epithet may be None
     """
-    # If trailing comma is present, needs to be stripped
-    epithet_match = re.search(r'(.+),?\s\'(.+)\'', work)
+    epithet_match = re.search(r'(.+),?\s\'(.+)\'(.+)', work)
     if epithet_match:
-        work = epithet_match.group(1)
+        work = epithet_match.group(1) + epithet_match.group(3)
+        work = work.replace(',,', ',')
+        # If trailing comma is present, needs to be stripped
         if work.endswith(','):
             work = work.rstrip(',')
         epithet = epithet_match.group(2)
@@ -332,27 +333,51 @@ def parse_opus_opusnumber_worknumber_from_title(work):
         tuple: (work_without_opus, work_number, opus, opus_number), where any field may be None
     """
     # Either, or, both, or neither may be present
-    both_match = re.search(r'(.+)\s(No\s\d+),*\s(Op\s\d+)\s(No\s\d+)(.*)', work)
+    work_number_opus_opus_number_match = re.search(r'(.+)\s(No\s\d+)(.+),*\s(Op\s\d+)\s(No\s\d+)(.*)', work)
+    work_number_opus_match = re.search(r'(.+)\s(No\s\d+)(.+),*\s(Op\s\d+)(.*)', work)
+    opus_opus_number_match = re.search(r'(.+),\s(Op\s\d+)\s(No\s\d+)(.*)', work)
+    work_number_match = re.search(r'(.+)\s(No\s\d+)(.*)', work)
     opus_match = re.search(r'(.+),\s(Op\s\d+)(.*)', work)
-    num_match = re.search(r'(.+),\s(No\s\d+)(.*)', work)
-    # Check for both - opus # and work #
-    if both_match:
-        work = both_match.group(1) + both_match.group(5)
-        work_number = both_match.group(2)
-        opus = both_match.group(3)
-        opus_number = both_match.group(4)
-    # Check for Opus only - opus #
+    # Check for work number, opus, opus number
+    if work_number_opus_opus_number_match:
+        work = work_number_opus_opus_number_match.group(1) + work_number_opus_opus_number_match.group(3) + work_number_opus_opus_number_match.group(6)
+        work = work.replace(',,', ',')
+        work_number = work_number_opus_opus_number_match.group(2)
+        opus = work_number_opus_opus_number_match.group(4)
+        opus_number = work_number_opus_opus_number_match.group(5)
+    # Check for work number, opus, no opus number
+    elif work_number_opus_match:
+        work = work_number_opus_match.group(1) + work_number_opus_match.group(3) + work_number_opus_match.group(5)
+        work = work.replace(',,', ',')
+        work_number = work_number_opus_match.group(2)
+        opus = work_number_opus_match.group(4)
+        opus_number = None
+    # Check for opus, opus number, no work number
+    elif opus_opus_number_match:
+        work = opus_opus_number_match.group(1) + opus_opus_number_match.group(4)
+        work = work.replace(',,', ',')
+        work_number = None
+        opus = opus_opus_number_match.group(2)
+        opus_number = opus_opus_number_match.group(3)
+    # Check for work number, no opus, no opus number
+    elif work_number_match:
+        opus = None
+        opus_number = None
+        work = work_number_match.group(1) + work_number_match.group(3)
+        work = work.replace(',,', ',')
+        work_number = work_number_match.group(2)
     elif opus_match:
         work = opus_match.group(1) + opus_match.group(3)
-        opus_number = opus_match.group(2)
-    # Check for No only - work #
-    elif num_match:
-        work = num_match.group(1) + num_match.group(3)
-        work_number = num_match.group(2)
+        work = work.replace(',,', ',')
+        work_number = None
+        opus = opus_match.group(2)
+        opus_number = None
     # Neither
     else:
         opus = None
         opus_number = None
+        work = work
+        work = work.replace(',,', ',')
         work_number = None
     return work, work_number, opus, opus_number
 
@@ -533,7 +558,7 @@ def get_track_fields_from_track_path(track_path):
     # Attempt to read the title string:
     audio_file = mutagen.flac.FLAC(track_path)
     # If it exists, extract tags from the title tag. Falling back to reading tags directly from the file if necessary
-    if audio_file['tracknumber'][0]:
+    if 'title' in audio_file.tags:
         work, work_number, initial_key, catalog_number, opus, \
             opus_number, epithet, movement = parse_fields_from_title_tag(track_path)
     # Otherwise, extract tags directly from the file
