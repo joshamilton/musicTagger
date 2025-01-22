@@ -8,6 +8,7 @@
 ### Import packages
 ################################################################################
 import os
+import pandas as pd
 import re
 import mutagen
 import mutagen.flac
@@ -57,7 +58,7 @@ def update_tags(tags_df, data_mgr = None):
             row = tags_df.loc[file_path]
             for tag, value in row.items():
                 # Check for missing values
-                if value != 'nan':
+                if pd.notna(value) and value != '':
                     audio_file[tag] = value
 
             # Create Title tag
