@@ -9,6 +9,7 @@
 import pytest
 import json
 import os
+import sqlite3
 from datetime import datetime
 from src.predict import DataManager
 
@@ -16,104 +17,125 @@ from src.predict import DataManager
 ### Tests for functions associated with DataManager class
 ################################################################################
 @pytest.fixture
-def temp_json_file(tmp_path):
-    """Create a temporary JSON file for testing"""
-    json_file = tmp_path / "test_tags.json"
-    return str(json_file)
+def temp_db_file_path(tmp_path):
+    """Path to a a temporary SQLite database file"""
+    db_file = tmp_path / "test_tags.db"
+    return str(db_file)
 
 @pytest.fixture
-def existing_data(temp_json_file):
-    """Create a JSON file with existing data"""
-    test_data = {
-        "/path/to/test.flac": {
-            "original": {
-                "timestamp": "2024-01-01T00:00:00",
-                "tags": {"title": "Title"}
-            }
-        }
-    }
-    with open(temp_json_file, 'w') as f:
-        json.dump(test_data, f)
-    return temp_json_file, test_data
+def temp_db_file(temp_db_file_path):
+    """Initialize the database and add data to it"""
+    # Initialize the database using DataManager to create the schema
+    manager = DataManager(temp_db_file_path)
+    manager.close()
 
-def test_init_new_file(temp_json_file):
-    """Test initializing with a new file"""
-    manager = DataManager(temp_json_file)
-    assert os.path.exists(temp_json_file)
-    assert manager.data == {}
+    # Manually insert data into the database
+    conn = sqlite3.connect(temp_db_file_path)
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO filename (filepath) VALUES (?)', ("/path/to/test.flac",))
+    filename_id = cursor.lastrowid
+    cursor.execute('INSERT INTO original_tags (filename_id, tag_key, tag_value) VALUES (?, ?, ?)',
+                   (filename_id, "title", "Title"))
+    conn.commit()
+    conn.close()
+    return temp_db_file_path, filename_id
 
-def test_init_existing_file(existing_data):
-    """Test initializing with existing file"""
-    json_file, test_data = existing_data
-    manager = DataManager(json_file)
-    assert manager.data == test_data
+@pytest.fixture
+def temp_db_file(temp_db_file_path):
+    """Initialize the database and add data to it"""
+    # Initialize the database using DataManager to create the schema
+    manager = DataManager(temp_db_file_path)
+    manager.close()
 
-def test_store_original_new_entry(temp_json_file):
-    """Test storing original tags for new file"""
-    manager = DataManager(temp_json_file)
-    test_tags = {"title": "Title"}
+    # Manually insert data into the database
+    conn = sqlite3.connect(temp_db_file_path)
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO filename (filepath) VALUES (?)', ("/path/to/test.flac",))
+    filename_id = cursor.lastrowid
+    cursor.execute('INSERT INTO original_tags (filename_id, tag_key, tag_value) VALUES (?, ?, ?)',
+                   (filename_id, "title", "Title"))
+    conn.commit()
+    conn.close()
+    return temp_db_file_path, filename_id
+
+def test_init_new_db(temp_db_file_path):
+    """Test initializing with a new database"""
+    manager = DataManager(temp_db_file_path)
+    assert os.path.exists(temp_db_file_path)
+    manager.cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = manager.cursor.fetchall()
+    assert len(tables) == 3  # filename, original_tags, updated_tags
+    table_names = [table[0] for table in tables]
+    assert "filename" in table_names
+    assert "original_tags" in table_names
+    assert "updated_tags" in table_names
+    manager.close()
+
+def test_init_existing_db(temp_db_file):
+    """Test initializing with an existing database"""
+    temp_db_file_path, filename_id = temp_db_file
+
+    # Re-initialize the DataManager with the existing database
+    manager = DataManager(temp_db_file_path)
+    manager.cursor.execute('SELECT tag_key, tag_value FROM original_tags WHERE filename_id = ?', (filename_id,))
+    original_tags = {row[0]: row[1] for row in manager.cursor.fetchall()}
+    assert original_tags["title"] == "Title"
+    manager.close()
+
+def test_save_original_tags_new_entry(temp_db_file_path):
+    """Test saving original tags for new file"""
+    manager = DataManager(temp_db_file_path)
+    test_tags = {"title": ["Title"]}
     test_path = "/path/to/new.flac"
     
-    manager.store_original(test_path, test_tags)
+    manager.save_original_tags(test_path, test_tags)
     
-    with open(temp_json_file, 'r') as f:
-        saved_data = json.load(f)
-    
-    assert test_path in saved_data
-    assert saved_data[test_path]["original"]["tags"] == test_tags
-    assert "timestamp" in saved_data[test_path]["original"]
+    original_tags, _ = manager.get_tags(test_path)
+    assert original_tags["title"] == "Title"
+    manager.close()
 
-def test_store_original_existing_entry(existing_data):
-    """Test that store_original doesn't overwrite existing data"""
-    json_file, original_data = existing_data
-    manager = DataManager(json_file)
+def test_save_original_tags_existing_entry(temp_db_file_path):
+    """Test that save_original_tags doesn't overwrite existing data"""
+    manager = DataManager(temp_db_file_path)
     test_path = "/path/to/test.flac"
-    new_tags = {"title": "Different Title"}
+    original_tags = {"title": ["Title"]}
+    new_tags = {"title": ["Different Title"]}
     
-    manager.store_original(test_path, new_tags)
+    manager.save_original_tags(test_path, original_tags)
+    manager.save_original_tags(test_path, new_tags)
     
-    with open(json_file, 'r') as f:
-        saved_data = json.load(f)
-    
-    assert saved_data == original_data
+    original_tags, _ = manager.get_tags(test_path)
+    assert original_tags["title"] == "Title"
+    manager.close()
 
-def test_store_correction_existing_entry(temp_json_file):
-    """Test storing correction tags"""
-    manager = DataManager(temp_json_file)
+def test_save_updated_tags_existing_entry(temp_db_file_path):
+    """Test saving updated tags"""
+    manager = DataManager(temp_db_file_path)
     test_path = "/path/to/test.flac"
-    original_tags = {"title": "Original"}
-    corrected_tags = {"title": "Corrected"}
+    original_tags = {"title": ["Original"]}
+    updated_tags = {"title": ["Updated"]}
     
-    manager.store_original(test_path, original_tags)
-    manager.store_correction(test_path, corrected_tags)
+    manager.save_original_tags(test_path, original_tags)
+    manager.save_updated_tags(test_path, updated_tags)
     
-    with open(temp_json_file, 'r') as f:
-        saved_data = json.load(f)
-    
-    assert saved_data[test_path]["original"]["tags"] == original_tags
-    assert saved_data[test_path]["corrected"]["tags"] == corrected_tags
-    assert "timestamp" in saved_data[test_path]["corrected"]
+    _, updated_tags = manager.get_tags(test_path)
+    assert updated_tags["title"] == "Updated"
+    manager.close()
 
-def test_store_correction_nonexistent_entry(temp_json_file):
-    """Test that store_correction only updates existing entries"""
-    manager = DataManager(temp_json_file)
+def test_save_updated_tags_nonexistent_entry(temp_db_file_path):
+    """Test that save_updated_tags only updates existing entries"""
+    manager = DataManager(temp_db_file_path)
     test_path = "/path/to/test.flac"
     another_path = "/path/to/another.flac"
-    original_tags = {"title": "Original"}
-    corrected_tags = {"title": "Corrected"}
+    original_tags = {"title": ["Original"]}
+    updated_tags = {"title": ["Updated"]}
     
     # Setup initial data
-    manager.store_original(test_path, original_tags)
+    manager.save_original_tags(test_path, original_tags)
     
-    # Try to store correction for non-existent path
-    manager.store_correction(another_path, corrected_tags)
+    # Try to store updated tags for non-existent path
+    manager.save_updated_tags(another_path, updated_tags)
     
-    with open(temp_json_file, 'r') as f:
-        saved_data = json.load(f)
-    
-    # Verify only original entry exists and wasn't modified
-    assert len(saved_data) == 1
-    assert test_path in saved_data
-    assert "corrected" not in saved_data[test_path]
-    assert saved_data[test_path]["original"]["tags"] == original_tags
-    assert another_path not in saved_data
+    original_tags, updated_tags = manager.get_tags(test_path)
+    assert updated_tags == {}
+    manager.close()

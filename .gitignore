@@ -3,8 +3,7 @@
 .coverage
 .vscode
 __pycache__
-extra_functions.py
 logs
-old_functions.py
 prompts.txt
-tags.json
+scratch.py
+tags.db

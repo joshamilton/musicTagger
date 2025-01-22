@@ -631,7 +631,7 @@ def get_tags(tags_df, data_mgr = None):
         if data_mgr:
             audio_file = mutagen.flac.FLAC(track_path)
             all_tags = dict(audio_file.tags)
-            data_mgr.store_original(track_path, all_tags)
+            data_mgr.save_original_tags(track_path, all_tags)
 
         # Get album info from path structure
         album, year_recorded, orchestra, conductor = get_album_fields_from_track_path(track_path)

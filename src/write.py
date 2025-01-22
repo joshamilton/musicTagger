@@ -100,7 +100,7 @@ def update_tags(tags_df, data_mgr = None):
             if data_mgr:
                 audio_file = mutagen.flac.FLAC(file_path)
                 all_tags = dict(audio_file.tags)
-                data_mgr.store_correction(file_path, all_tags)
+                data_mgr.save_updated_tags(file_path, all_tags)
 
             # Rename the track
             track_number = row.get('TrackNumber', '')
@@ -110,8 +110,9 @@ def update_tags(tags_df, data_mgr = None):
             new_file_path = os.path.join(os.path.dirname(file_path), new_file_name)
             os.rename(file_path, new_file_path)
 
-        except:
+        except Exception as e:
             failed_paths.append(file_path)
+            print(e)
     
     # Create success/failure dataframes
     successful_df = tags_df.loc[successful_paths]
