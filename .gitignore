@@ -6,4 +6,5 @@ __pycache__
 logs
 prompts.txt
 scratch.py
+tags.csv
 tags.db
