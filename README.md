@@ -24,6 +24,8 @@ The tool was written to reflect my personal idiosyncrasies in tagging classical 
 - Supports batch updates from Excel files
 - Preserves unicode characters in tags
 - Tracks successful and failed tag operations
+- Uses SQLite for storing updated tags
+- Utility functions to assist with additional operations
 
 ## Prerequisites
 
@@ -127,3 +129,34 @@ The codebase includes comprehensive unit tests using pytest. Tests cover:
 Run tests with:
 ```bash
 pytest
+```
+
+## Utility Functions
+
+Utility scripts are included to assist with additional operations. They can be found in the `src/utils` directory.
+
+### Find and Remove Empty Tags
+The `find_remove_empty_tags.py` script can be used to find and remove empty tags from FLAC files. In an older version of this software, a missing tag was sometimes written as an empty string. This script cleans up those files by removing the empty tags.
+
+To find files with empty tags:
+
+```bash
+python utils/find_remove_empty_tags.py \
+  "path/to/music/files"
+```
+
+To remove empty tags from files listed in empty_tags.csv:
+```bash
+python utils/find_remove_empty_tags.py \
+  "path/to/music/files" \
+  --remove
+```
+
+### Convert the SQLite Database to Excel
+The `sqlite_to_excel.py` script can be used to convert the SQLite database to an Excel file. This can be useful for manual inspection of the database contents.
+
+```bash
+python utils/sqlite_to_excel.py \
+  "path/to/sqlite.db" \
+  "output.xlsx"
+```

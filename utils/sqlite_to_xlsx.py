@@ -1,7 +1,7 @@
 ################################################################################
-### sqlite_to_csv.py
+### sqlite_to_xlsx.py
 ### Copyright (c) 2025, Joshua J Hamilton
-### This utility program converts a SQLite database to a CSV file.
+### This utility program converts a SQLite database to a XLSX file.
 ################################################################################
 
 ################################################################################
@@ -11,19 +11,18 @@
 import argparse
 import sqlite3
 import pandas as pd
-import csv
 
 ################################################################################
 ### Define functions
 ################################################################################
 
-def sqlite_to_csv(sqlite_db, csv_file):
+def sqlite_to_xlsx(sqlite_db, xlsx_file):
     """
-    Convert a SQLite database to a CSV file.
+    Convert a SQLite database to a XLSX file.
 
     Args:
         sqlite_db (str): Path to the SQLite database file
-        csv_file (str): Path to the CSV file to write
+        xlsx_file (str): Path to the XLSX file to write
 
     Returns:
         None
@@ -76,20 +75,20 @@ def sqlite_to_csv(sqlite_db, csv_file):
     remaining_columns = [col for col in result_df.columns if col not in columns_order]
     result_df = result_df[columns_order + remaining_columns]
 
-    # Write to CSV
-    result_df.to_csv(csv_file, index=False)
+    # Write to XLSX file
+    result_df.to_excel(xlsx_file, engine = 'xlsxwriter', index=False)
 
     # Close the connection
     conn.close()
-    print('Data successfully written to CSV file')
+    print('Data successfully written to XLSX file')
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert a SQLite database to a CSV file")
+    parser = argparse.ArgumentParser(description="Convert a SQLite database to a XLSX file")
     parser.add_argument('--sqlite_db', required=True, help="Path to the SQLite database file")
-    parser.add_argument('--csv_file', required=True, help="Path to the CSV file to write")
+    parser.add_argument('--xlsx_file', required=True, help="Path to the XLSX file to write")
     args = parser.parse_args()
 
-    sqlite_to_csv(args.sqlite_db, args.csv_file)
+    sqlite_to_xlsx(args.sqlite_db, args.xlsx_file)
 
 if __name__ == "__main__":
     main()

@@ -2,6 +2,7 @@ name: musicTagger
 channels:
   - conda-forge
 dependencies:
+  - ipykernel
   - mutagen=1.40.0
   - pandas
   - pytest=7.4.4
