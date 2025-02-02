@@ -51,9 +51,10 @@ def update_tags(tags_df, data_mgr = None):
 
         # Update FLAC tags
         try:
-            # Delete all FLAC tags
+            # Delete all FLAC tags and images
             audio_file = mutagen.flac.FLAC(file_path)
             audio_file.delete()
+            audio_file.clear_pictures()
             # Add new ones
             row = tags_df.loc[file_path]
             for tag, value in row.items():
@@ -105,6 +106,7 @@ def update_tags(tags_df, data_mgr = None):
 
             # Rename the track
             track_number = row.get('TrackNumber', '')
+            track_number = track_number.zfill(2)  # Pad the track number to two digits
             # Sanitize the title
             safe_title = re.sub(r'[\\/:*?"<>|]', '_', title)
             new_file_name = f"{track_number} - {safe_title}.flac"
