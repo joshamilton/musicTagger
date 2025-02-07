@@ -3,8 +3,10 @@ channels:
   - conda-forge
 dependencies:
   - ipykernel=6.29.5
+  - ipywidgets=7.8.5
   - matplotlib=3.10.0
   - mutagen=1.40.0
+  - notebook=7.3.2
   - openai=1.59.0
   - pandas=2.2.3
   - plotly=6.0.0
