@@ -23,11 +23,12 @@ def get_files_to_process(directory):
     files_to_rename = []
     files_to_delete = []
     valid_extensions = {'.flac', '.log', '.cue', '.pdf'}
+    valid_files = {'README.txt', 'Setlist Info.txt'}
     for root, _, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(root, file)
             ext = os.path.splitext(file)[1]
-            if ext.lower() in valid_extensions:
+            if (ext.lower() in valid_extensions) or (file in valid_files):
                 if ext != ext.lower():
                     files_to_rename.append(file_path)
             else:
