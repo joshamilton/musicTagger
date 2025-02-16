@@ -64,13 +64,9 @@ def find_files_with_empty_tags(search_dir):
 
     return
 
-def remove_empty_tags():
+def remove_empty_tags(files):
     successful_paths = []
     failed_paths = []
-
-    with open('empty_tags.csv', 'r') as csvfile:
-        reader = csv.reader(csvfile)
-        files = list(reader)
 
     print(f"Removing empty tags from {len(files)} files...")
 
@@ -103,16 +99,13 @@ def remove_empty_tags():
         for file_path in sorted(failed_paths):
             writer.writerow([file_path])  
 
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Find and remove empty tags from FLAC files")
-    parser.add_argument('dir', required=True, help="Directory to search for FLAC files")
-    parser.add_argument('--remove', action='store_true', help="Remove empty tags from files listed in empty_tags.csv")
+    parser.add_argument('dir', help="Directory to search for FLAC files")
+    parser.add_argument('--dry-run', action='store_true', help="Generate a report without making changes")
     args = parser.parse_args()
 
-    if args.remove:
-        find_files_with_empty_tags(args.dir)
-        remove_empty_tags()
-    else:
-        find_files_with_empty_tags(args.dir)
+    empty_tag_files = find_files_with_empty_tags(args.dir)
+
+    if not args.dry_run:
+        remove_empty_tags(empty_tag_files)
