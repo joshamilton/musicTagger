@@ -104,11 +104,103 @@ The utility manages the following tag fields:
 - Disc Number: For multi-disc sets
 - Track Number: Position on disc
 
-
 ### Error Handling
 - Failed tag operations are logged to a separate Excel file
 - The utility preserves the original tags if an update operation fails
 - Unicode characters are properly handled using the XLSXWriter engine
+
+## Utility Scripts
+
+### Cleanup Script
+The `cleanup.py` script finds and removes files that are not FLAC, CUE, LOG, or PDF. It also renames files with uppercase extensions to lowercase and reports albums missing either a FLAC or CUE file.
+
+#### Usage
+```bash
+python utils/cleanup.py --dir "path/to/music/files" [--dry-run]
+```
+
+- `--dir`: Directory to scan for files.
+- `--dry-run`: Generate a report without making changes.
+
+### Convert Script
+The `convert.py` script converts 24-bit FLAC files to 16-bit, 44 kHz FLAC files using SoX. It features an "overwrite" option to replace the original files and can be run in dry-run mode to generate reports.
+
+#### Usage
+```bash
+python utils/convert.py --dir "path/to/music/files" [--dry-run] [--overwrite]
+```
+
+- `--dir`: Directory to scan for FLAC files.
+- `--dry-run`: Generate a report of files to convert without converting.
+- `--overwrite`: Overwrite the original files after conversion.
+
+### Find and Remove Empty Tags Script
+The `find_remove_empty_tags.py` script finds and removes empty tags from FLAC files. It can be run in dry-run mode to generate a report of files with empty tags.
+
+#### Usage
+```bash
+python utils/find_remove_empty_tags.py --dir "path/to/music/files" [--remove]
+```
+
+- `--dir`: Directory to search for FLAC files.
+- `--remove`: Remove empty tags from files listed in `empty_tags.csv`.
+
+### SQLite to CSV Script
+The `sqlite_to_csv.py` script converts a SQLite database to a CSV file.
+
+#### Usage
+```bash
+python utils/sqlite_to_csv.py --sqlite_db "path/to/tags.db" --csv_file "output.csv"
+```
+
+- `--sqlite_db`: Path to the SQLite database file.
+- `--csv_file`: Path to the CSV file to write.
+## Utility Scripts
+
+### Cleanup Script
+The `cleanup.py` script finds and removes files that are not FLAC, CUE, LOG, or PDF. It also renames files with uppercase extensions to lowercase and reports albums missing either a FLAC or CUE file.
+
+#### Usage
+```bash
+python utils/cleanup.py --dir "path/to/music/files" [--dry-run]
+```
+
+- `--dir`: Directory to scan for files.
+- `--dry-run`: Generate a report without making changes.
+
+### Convert Script
+The `convert.py` script converts 24-bit FLAC files to 16-bit, 44 kHz FLAC files using SoX. It features an "overwrite" option to replace the original files and can be run in dry-run mode to generate reports.
+
+#### Usage
+```bash
+python utils/convert.py --dir "path/to/music/files" [--dry-run] [--overwrite]
+```
+
+- `--dir`: Directory to scan for FLAC files.
+- `--dry-run`: Generate a report of files to convert without converting.
+- `--overwrite`: Overwrite the original files after conversion.
+
+### Find and Remove Empty Tags Script
+The `find_remove_empty_tags.py` script finds and removes empty tags from FLAC files. It can be run in dry-run mode to generate a report of files with empty tags.
+
+#### Usage
+```bash
+python utils/find_remove_empty_tags.py --dir "path/to/music/files" [--remove]
+```
+
+- `--dir`: Directory to search for FLAC files.
+- `--dry-run`: Generate a report of files to update `empty_tags.csv` without updating.
+
+### SQLite to CSV Script
+The `sqlite_to_csv.py` script converts a SQLite database to a CSV file.
+
+#### Usage
+```bash
+python utils/sqlite_to_csv.py --sqlite_db "path/to/tags.db" --csv_file "output.csv"
+```
+
+- `--sqlite_db`: Path to the SQLite database file.
+- `--csv_file`: Path to the CSV file to write.
 
 ## Testing
 The codebase includes comprehensive unit tests using pytest. Tests cover:
