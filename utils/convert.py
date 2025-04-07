@@ -1,5 +1,5 @@
 ################################################################################
-### cleanup.py
+### convert.py
 ### Copyright (c) 2025, Joshua J Hamilton
 ### This utility program finds 24 bit FLAC files and converts them to 16 bit,
 ### 44 kHz FLAC files using SoX. 
@@ -50,10 +50,13 @@ def check_flac_metadata(file_path):
     Returns:
         tuple: (bit_depth, sample_rate)
     """
-    audio = FLAC(file_path)
-    bit_depth = audio.info.bits_per_sample
-    sample_rate = audio.info.sample_rate
-    return bit_depth, sample_rate
+    try:
+        audio = FLAC(file_path)
+        bit_depth = audio.info.bits_per_sample
+        sample_rate = audio.info.sample_rate
+        return bit_depth, sample_rate
+    except Exception as e:
+        return None
 
 def convert_flac(file_path, output_path):
     """
@@ -105,14 +108,27 @@ def main():
     files_to_convert = []
     other_files = []
     total_size_to_convert = 0
+    failed_paths = [] # List to store files with errors
 
     for file_path in flac_files:
-        bit_depth, sample_rate = check_flac_metadata(file_path)
+        metadata = check_flac_metadata(file_path)
+        if metadata is None:
+            failed_paths.append((file_path, None, None))
+            continue
+        bit_depth, sample_rate = metadata
         if bit_depth == 24:
             files_to_convert.append((file_path, bit_depth, sample_rate))
             total_size_to_convert += get_file_size(file_path)
         elif bit_depth != 16 or sample_rate != 44100:
             other_files.append((file_path, bit_depth, sample_rate))
+
+    # Write failed paths to a CSV file
+    if failed_paths:
+        with open('failure.csv', 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            for file_path in sorted(failed_paths):
+                writer.writerow([file_path]) 
+            print(f"Found {len(failed_paths)} files with errors. Corrupt or unreadable files logged to failure.csv.")
 
     if args.dry_run:
         with open("convert.csv", "w", newline='') as csvfile:
