@@ -2,8 +2,11 @@ name: musicTagger
 channels:
   - conda-forge
 dependencies:
+  - fpdf2
   - mutagen=1.40.0
   - pandas
+  - pillow
+  - pypdf
   - pytest=7.4.4
   - pytest-mock=3.14.0
   - pytest-cov=6.0.0
