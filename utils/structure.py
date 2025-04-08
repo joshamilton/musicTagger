@@ -22,7 +22,9 @@
 ################################################################################
 
 import argparse
+import csv
 import os
+import re
 import sys
 
 from PIL import Image # 1: convert images to jpg
@@ -36,7 +38,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.utils import setup_logging
 
 ################################################################################
-### Define functions
+### Define functions for creating Scans.pdf
 ################################################################################
 
 def collect_files(directory, valid_extensions):
@@ -144,92 +146,189 @@ def delete_original_files(files, logger):
         except Exception as e:
             logger.error(f"Error deleting file {file}: {e}")
 
-def create_scans(directory, delete_scan_files=False, logger=None):
-    """
-    Combines all image and PDF files in the folder into a single PDF named Scans.pdf.
-    Optionally deletes the original files after creating the PDF.
 
-    Args:
-        directory (str): Path to the directory.
-        delete_originals (bool): Whether to delete original files.
-
-    Returns:
-        None
-    """
-
+def create_scans(subdirectory_path, dry_run, writer, logger):
     valid_extensions = {'.jpg', '.jpeg', '.png', '.tiff', '.bmp', '.svg', '.pdf'}
-
-    logger.info(f"Starting processing for directory: {directory}")
-    image_files, pdf_files = collect_files(directory, valid_extensions)
+    image_files, pdf_files = collect_files(subdirectory_path, valid_extensions)
 
     if not image_files and not pdf_files:
-        logger.warning("No image or PDF files found.")
+        logger.warning(f"No image or PDF files found in {subdirectory_path}.")
         return
 
-    # Create a temporary PDF for images
-    temp_image_pdf = os.path.join(directory, "temp_images.pdf")
+    if dry_run:
+        logger.info(f"Dry run: The following files would be included in Scans.pdf for {subdirectory_path}:")
+        for file in image_files + pdf_files:
+            logger.info(f"  - {file}")
+            writer.writerow([subdirectory_path, file])
+        return
+
+    temp_image_pdf = os.path.join(subdirectory_path, "temp_images.pdf")
     if image_files:
         create_image_pdf(image_files, temp_image_pdf, logger)
-        pdf_files.insert(0, temp_image_pdf)  # Add the image PDF to the list of PDFs
+        pdf_files.insert(0, temp_image_pdf)
 
-    # Merge all PDFs
-    output_path = os.path.join(directory, "Scans.pdf")
+    output_path = os.path.join(subdirectory_path, "Scans.pdf")
     merge_pdfs(pdf_files, output_path, logger)
 
-    # Clean up temporary image PDF
     if os.path.exists(temp_image_pdf):
         os.remove(temp_image_pdf)
 
-    # Optionally delete original files
-    if delete_scan_files:
-        delete_original_files(image_files + pdf_files, logger)
-
+    delete_original_files(image_files + pdf_files, logger)
     logger.info(f"Scans.pdf created at: {output_path}")
 
-def remove_misc_files(directory, files_to_keep, logger):
+
+################################################################################
+### Define functions for renaming "Disc" folders
+################################################################################
+
+def identify_and_map_disc_folders(directory, logger):
     """
-    Remove all files in the directory that do not match the specified extensions.
+    Identify disc folders and map them to new names in the format 'Disc #'.
 
     Args:
-        directory (str): Path to the directory to clean.
-        files_to_keep (set): Set of file extensions to keep (e.g., {".pdf", ".log"}).
+        directory (str): Path to the directory containing potential disc folders.
+        logger (logging.Logger): Logger object.
+
+    Returns:
+        list: A list of tuples containing the original folder path and revised folder name.
+    """
+    disc_folders = []
+    non_disc_folders = []
+
+    # Regex to identify potential disc folder names
+    disc_name_patterns = [
+        r'cd\s*(\d+)',   # Matches "CD 1", "CD01", etc., capturing the number
+        r'disc\s*(\d+)', # Matches "Disc 1", "Disc01", etc., capturing the number
+        r'disk\s*(\d+)', # Matches "Disk 1", "Disk01", etc., capturing the number
+        r'(\d+)$',       # Matches names ending with numbers, capturing the number
+    ]
+
+    # Supported audio file extensions
+    audio_extensions = {'.flac', '.ape', '.wv', '.wav', '.iso', '.m4a'}
+
+    # Walk through the directory to identify folders
+    for folder_name in sorted(os.listdir(directory)):
+        folder_path = os.path.join(directory, folder_name)
+        if os.path.isdir(folder_path):
+            # Check if the folder contains .flac files
+            contains_audio = any(file.lower().endswith(ext) for ext in audio_extensions for file in os.listdir(folder_path))
+            if contains_audio:
+                # Extract disc number if the folder name matches any disc name pattern
+                disc_number = None
+                for pattern in disc_name_patterns:
+                    match = re.search(pattern, folder_name, re.IGNORECASE) # Match case-insensitively
+                    if match:
+                        disc_number = int(match.group(1))  # Extract the captured number
+                        break
+
+                if disc_number is not None:
+                    disc_folders.append((disc_number, folder_name))
+                else:
+                    logger.warning(f"Folder '{folder_name}' contains .flac files but does not match disc patterns.")
+                    disc_folders.append((float('inf'), folder_name))  # Assign a high number for sorting
+            else:
+                non_disc_folders.append(folder_name)
+
+    # Sort disc folders by their extracted disc number
+    disc_folders.sort(key=lambda x: x[0])
+
+    # Determine the number of digits for padding
+    max_disc_number = len(disc_folders)
+    digit_padding = len(str(max_disc_number))
+
+    # Map original folder names to new names
+    folder_mappings = []
+    for index, (_, folder_name) in enumerate(disc_folders, start=1):
+        new_name = f"Disc {str(index).zfill(digit_padding)}"
+        folder_mappings.append((os.path.join(directory, folder_name), new_name))
+
+    # Log non-disc folders for reference
+    if non_disc_folders:
+        logger.info(f"Non-disc folders identified in {directory}: {non_disc_folders}")
+
+    return folder_mappings
+
+
+def rename_disc_folders(subdirectory_path, dry_run, writer, logger):
+    mappings = identify_and_map_disc_folders(subdirectory_path, logger)
+
+    for original_path, new_name in mappings:
+        if dry_run:
+            logger.info(f"Dry run: Would rename {original_path} to {new_name}")
+            writer.writerow([original_path, new_name])
+        else:
+            new_path = os.path.join(os.path.dirname(original_path), new_name)
+            try:
+                os.rename(original_path, new_path)
+                logger.info(f"Renamed: {original_path} -> {new_path}")
+                writer.writerow([original_path, new_name])
+            except Exception as e:
+                logger.error(f"Error renaming {original_path} to {new_path}: {e}")
+
+
+################################################################################
+### Define functions for removing miscellaneous files
+################################################################################
+
+def cleanup_directory(subdirectory_path, dry_run, writer, logger):
+    """
+    Removes miscellaneous files and empty directories within the given subdirectory.
+
+    Args:
+        subdirectory_path (str): Path to the subdirectory to clean up.
+        dry_run (bool): If True, logs the actions without making changes.
+        writer (csv.writer): CSV writer object for logging actions.
         logger (logging.Logger): Logger object.
 
     Returns:
         None
     """
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if not any(file.lower().endswith(ext) for ext in files_to_keep):
-                file_path = os.path.join(root, file)
-                try:
-                    os.remove(file_path)
-                    logger.info(f"Deleted: {file_path}")
-                except Exception as e:
-                    logger.error(f"Error deleting file {file_path}: {e}")
-    logger.info("Removed all miscellaneous files.")
+    # Define the set of file extensions to keep
+    files_to_keep = {".pdf", ".log", ".cue", ".flac", ".ape", ".wv", ".wav"}
 
-def remove_empty_dirs(directory, logger):
-    """
-    Recursively removes all empty directories within the given directory.
-    """
-    for root, dirs, _ in os.walk(directory, topdown=False):  # Process subdirectories first
+    # Remove miscellaneous files
+    for root, _, files in os.walk(subdirectory_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            if not any(file.lower().endswith(ext) for ext in files_to_keep):
+                if dry_run:
+                    logger.info(f"Dry run: Would delete {file_path}")
+                    writer.writerow([file_path])
+                else:
+                    try:
+                        os.remove(file_path)
+                        logger.info(f"Deleted: {file_path}")
+                        writer.writerow([file_path])
+                    except Exception as e:
+                        logger.error(f"Error deleting file {file_path}: {e}")
+
+    # Remove empty directories
+    for root, dirs, _ in os.walk(subdirectory_path, topdown=False):  # Process subdirectories first
         for dir_name in dirs:
             dir_path = os.path.join(root, dir_name)
             if not os.listdir(dir_path):  # Check if the directory is empty
-                os.rmdir(dir_path)
-                logger.info(f"Removed empty directory: {dir_path}")
+                if dry_run:
+                    logger.info(f"Dry run: Would remove empty directory {dir_path}")
+                    writer.writerow([dir_path])
+                else:
+                    try:
+                        os.rmdir(dir_path)
+                        logger.info(f"Removed empty directory: {dir_path}")
+                        writer.writerow([dir_path])
+                    except Exception as e:
+                        logger.error(f"Error removing directory {dir_path}: {e}")
 
 ################################################################################
 ### Define main function
 ################################################################################
 
 def main():
-    parser = argparse.ArgumentParser(description="Combine image and PDF files into a single Scans.pdf.")
-    parser.add_argument('--dir', required=True, help="Path to the directory containing image and PDF files.")
-    parser.add_argument('--delete_scan', action='store_true', help="Delete original files after creating Scans.pdf.")
-    parser.add_argument('--delete_misc', action='store_true', help="Delete other unnecessary files.")
-    
+    parser = argparse.ArgumentParser(description="Utility script for organizing audio files.")
+    parser.add_argument('--dir', required=True, help="Path to the root directory to process.")
+    parser.add_argument('--mode', required=True, choices=['make_scans', 'rename_dirs', 'cleanup', 'all'],
+                        help="Mode of operation: make_scans, rename_dirs, cleanup, or all.")
+    parser.add_argument('--dry-run', action='store_true', help="Perform a dry run without making changes.")
+    parser.add_argument('--output-csv', help="Path to the output CSV file (default: output.csv).")
     args = parser.parse_args()
 
     # Set up logging in the root project directory
@@ -240,21 +339,39 @@ def main():
         print(f"Error: The directory '{args.dir}' does not exist.")
         return
 
+    # Set default output CSV path if not provided
+    output_csv = args.output_csv or os.path.join(args.dir, "output.csv")
+
     # Get the list of subdirectories
     subdirectories = [os.path.join(args.dir, subdirectory) for subdirectory in sorted(os.listdir(args.dir)) if os.path.isdir(os.path.join(args.dir, subdirectory))]
 
-    # Process each subdirectory with a progress bar
-    for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories"):
-        create_scans(subdirectory_path, delete_scan_files=args.delete_scan, logger=logger)
+    # Open the CSV file for writing
+    with open(output_csv, mode='w', newline='', encoding='utf-8') as csv_file:
+        writer = csv.writer(csv_file)
 
-    # Remove all non-essential files if --delete_misc is specified
-    if args.delete_misc:
-        files_to_keep = {".pdf", ".log", ".cue", ".flac"}
-        remove_misc_files(args.dir, files_to_keep, logger)
-    
-    # Remove any empty directories
-    remove_empty_dirs(args.dir, logger)
-    print("Removed all empty directories.")
+        # Process based on the selected mode
+        if args.mode in ['make_scans', 'all']:
+            writer.writerow(["Mode: make_scans"])
+            writer.writerow(["Directory", "Included Files"])
+            for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for Scans.pdf"):
+                create_scans(subdirectory_path, args.dry_run, writer, logger)
+            writer.writerow([])  # Add a blank line between modes
+
+        if args.mode in ['rename_dirs', 'all']:
+            writer.writerow(["Mode: rename_dirs"])
+            writer.writerow(["Original Folder Path", "Revised Folder Name"])
+            for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for renaming"):
+                rename_disc_folders(subdirectory_path, args.dry_run, writer, logger)
+            writer.writerow([])  # Add a blank line between modes
+
+        if args.mode in ['cleanup', 'all']:
+            writer.writerow(["Mode: cleanup"])
+            writer.writerow(["Deleted Files"])
+            for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for cleanup"):
+                cleanup_directory(subdirectory_path, args.dry_run, writer, logger)
+            writer.writerow([])  # Add a blank line between modes
+
+    print(f"Processing complete. Output written to {output_csv}.")
 
 if __name__ == "__main__":
     main()
