@@ -111,6 +111,49 @@ The utility manages the following tag fields:
 
 ## Utility Scripts
 
+### Folder Structure Script
+The `structure.py` script organizes and cleans up album directories. It supports multiple modes of operation, including creating `Scans.pdf`, renaming disc folders, and cleaning up unnecessary files and empty directories. The script can also generate a single CSV file summarizing all actions for human inspection.
+
+#### Usage
+```bash
+python utils/structure.py --dir "path/to/music/files" --mode [make_scans|rename_dirs|cleanup|all] [--dry-run] [--output-csv "output.csv"]
+```
+
+- `--dir`: Directory to process (required).
+- `--mode`: Mode of operation (required). Options:
+  - `make_scans`: Creates `Scans.pdf` for each subdirectory and deletes original image and PDF files.
+  - `rename_dirs`: Renames disc folders based on audio file content and naming patterns.
+  - `cleanup`: Removes unnecessary files and empty directories.
+  - `all`: Combines all modes into a single operation.
+- `--dry-run`: Logs actions without making changes.
+- `--output-csv`: Path to the output CSV file summarizing all actions (default: `output.csv`).
+
+#### Modes
+1. **`make_scans`**:
+   - Combines image and PDF files in each subdirectory into a single `Scans.pdf`.
+   - Deletes the original files after creating the PDF.
+   - Logs included files to the CSV file.
+
+2. **`rename_dirs`**:
+   - Renames disc folders to a standardized format (`Disc #`) based on audio file content.
+   - Generates a CSV file with mappings of original folder names to revised names.
+
+3. **`cleanup`**:
+   - Removes files that do not match allowed extensions (`.pdf`, `.log`, `.cue`, `.flac`, `.ape`, `.wv`, `.wav`).
+   - Removes empty directories.
+   - Logs deleted files and directories to the CSV file.
+
+4. **`all`**:
+   - Combines `make_scans`, `rename_dirs`, and `cleanup` into a single operation.
+   - Logs all actions to the CSV file, separated by mode.
+
+5. **`--dry-run`**:
+   - Generates a report of actions without making any changes.
+
+#### CSV Output
+The CSV file provides a clear summary of all actions performed, or that would be performed in `--dry-run` mode. The script generates a single CSV file summarizing all actions. Each mode is separated by a blank line and includes appropriate headers. 
+
+
 ### Cleanup Script
 The `cleanup.py` script finds and removes files that are not FLAC, CUE, LOG, or PDF. It also renames files with uppercase extensions to lowercase and reports albums missing either a FLAC or CUE file.
 
