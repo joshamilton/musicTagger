@@ -140,12 +140,14 @@ def delete_original_files(files, logger):
         None
     """
     for file in files:
+        if os.path.basename(file).lower() == "scans.pdf":
+            logger.info(f"Skipping deletion of {file}")
+            continue
         try:
             os.remove(file)
             logger.info(f"Deleted: {file}")
         except Exception as e:
             logger.error(f"Error deleting file {file}: {e}")
-
 
 def create_scans(subdirectory_path, dry_run, writer, logger):
     valid_extensions = {'.jpg', '.jpeg', '.png', '.tiff', '.bmp', '.svg', '.pdf'}
