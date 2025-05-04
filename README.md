@@ -220,6 +220,7 @@ python utils/convert.py --dir "path/to/music/files" [--dry-run] [--overwrite]
 ```
 
 - `--dir`: Directory to scan for FLAC files.
+- `--file-list`: Path to a text file containing a list of FLAC files to convert.
 - `--dry-run`: Generate a report of files to convert without converting.
 - `--overwrite`: Overwrite the original files after conversion.
 

@@ -40,6 +40,29 @@ def get_flac_files(search_dir):
                 flac_files.append(os.path.join(dirpath, file))
     return flac_files
 
+def read_file_list(file_list_path):
+    """
+    Read a list of file paths, bit depths, and sample rates from a CSV file.
+
+    Args:
+        file_list_path (str): Path to the CSV file.
+
+    Returns:
+        list: List of tuples (file_path, bit_depth, sample_rate).
+    """
+    files_to_convert = []
+    try:
+        with open(file_list_path, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                file_path = row['file_path']
+                bit_depth = int(row['bit_depth'])
+                sample_rate = int(row['sample_rate'])
+                files_to_convert.append((file_path, bit_depth, sample_rate))
+    except Exception as e:
+        print(f"Error reading file list: {e}")
+    return files_to_convert
+
 def check_flac_metadata(file_path):
     """
     Check the bit depth and sample rate of a FLAC file.
@@ -93,42 +116,51 @@ def get_file_size(file_path):
     """
     return os.path.getsize(file_path)
 
+
+
 ################################################################################
 ### Define main function
 ################################################################################
 
 def main():
     parser = argparse.ArgumentParser(description="Convert FLAC files from 24 bit to 16 bit 44 kHz.")
-    parser.add_argument('--dir', required=True, help="Directory to scan for FLAC files.")
+    parser.add_argument('--dir', help="Directory to scan for FLAC files.")
+    parser.add_argument('--file-list', help="CSV file containing a list of files to convert.")
     parser.add_argument('--dry-run', action='store_true', help="Generate a report of files to convert without converting.")
     parser.add_argument('--overwrite', action='store_true', help="Overwrite the original files after conversion.")
     args = parser.parse_args()
 
-    flac_files = get_flac_files(args.dir)
-    files_to_convert = []
-    other_files = []
-    total_size_to_convert = 0
-    failed_paths = [] # List to store files with errors
+    if not args.dir and not args.file_list:
+        print("Error: You must specify either --dir or --file-list.")
+        return
 
-    for file_path in flac_files:
-        metadata = check_flac_metadata(file_path)
-        if metadata is None:
-            failed_paths.append((file_path, None, None))
-            continue
-        bit_depth, sample_rate = metadata
-        if bit_depth == 24:
-            files_to_convert.append((file_path, bit_depth, sample_rate))
-            total_size_to_convert += get_file_size(file_path)
-        elif bit_depth != 16 or sample_rate != 44100:
-            other_files.append((file_path, bit_depth, sample_rate))
+    flac_files = []
+    if args.file_list:
+        files_to_convert = read_file_list(args.file_list)
+    elif args.dir:
+        flac_files = get_flac_files(args.dir)
+    
+        files_to_convert = []
+        total_size_to_convert = 0
+        failed_paths = [] # List to store files with errors
 
-    # Write failed paths to a CSV file
-    if failed_paths:
-        with open('failure.csv', 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            for file_path in sorted(failed_paths):
-                writer.writerow([file_path]) 
-            print(f"Found {len(failed_paths)} files with errors. Corrupt or unreadable files logged to failure.csv.")
+        for file_path in flac_files:
+            metadata = check_flac_metadata(file_path)
+            if metadata is None:
+                failed_paths.append((file_path, None, None))
+                continue
+            bit_depth, sample_rate = metadata
+            if bit_depth != 16 or sample_rate != 44100:
+                files_to_convert.append((file_path, bit_depth, sample_rate))
+                total_size_to_convert += get_file_size(file_path)
+
+        # Write failed paths to a CSV file
+        if failed_paths:
+            with open('failure.csv', 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                for file_path in sorted(failed_paths):
+                    writer.writerow([file_path]) 
+                print(f"Found {len(failed_paths)} files with errors. Corrupt or unreadable files logged to failure.csv.")
 
     if args.dry_run:
         with open("convert.csv", "w", newline='') as csvfile:
@@ -138,17 +170,9 @@ def main():
             for file, bit_depth, sample_rate in sorted(files_to_convert):
                 writer.writerow({'file_path': file, 'bit_depth': bit_depth, 'sample_rate': sample_rate})
         
-        with open("other.csv", "w", newline='') as csvfile:
-            fieldnames = ['file_path', 'bit_depth', 'sample_rate']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            for file, bit_depth, sample_rate in sorted(other_files):
-                writer.writerow({'file_path': file, 'bit_depth': bit_depth, 'sample_rate': sample_rate})
-        
-        print(f"Dry run complete. List of 24-bit files saved to convert.csv. List of files with other bitrates saved to other.csv.")
+        print(f"Dry run complete. List of files saved to convert.csv.")
         print(f"Files to convert: {len(files_to_convert)}")
         print(f"Total size of files to convert: {total_size_to_convert / (1024 * 1024):.2f} MB")
-        print(f"Other FLAC files: {len(other_files)}")
     else:
         errors = []
         total_space_saved = 0
