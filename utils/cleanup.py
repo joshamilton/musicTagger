@@ -67,19 +67,19 @@ def delete_files(files):
                 raise
     return busy_files
 
-def generate_report(files_to_rename, files_to_delete, busy_files_rename, busy_files_delete):
-    with open("rename.txt", "w") as rename_file:
+def generate_report(files_to_rename, files_to_delete, busy_files_rename, busy_files_delete, output_dir):
+    with open(os.path.join(output_dir, "rename.txt"), "w") as rename_file:
         rename_file.write("Files to be renamed:\n")
         for file in files_to_rename:
             base, ext = os.path.splitext(file)
             rename_file.write(f"{file} -> {base + ext.lower()}\n")
     
-    with open("delete.txt", "w") as delete_file:
+    with open(os.path.join(output_dir, "delete.txt"), "w") as delete_file:
         delete_file.write("Files to be deleted:\n")
         for file in files_to_delete:
             delete_file.write(f"{file}\n")
     
-    with open("busy.txt", "w") as busy_file:
+    with open(os.path.join(output_dir, "busy.txt"), "w") as busy_file:
         busy_file.write("Files that are busy and could not be processed:\n")
         busy_file.write("Renaming:\n")
         for file in busy_files_rename:
@@ -88,7 +88,7 @@ def generate_report(files_to_rename, files_to_delete, busy_files_rename, busy_fi
         for file in busy_files_delete:
             busy_file.write(f"{file}\n")
 
-def generate_missing_files_report(directory):
+def generate_missing_files_report(directory, output_dir):
     print('Generating missing files report...')
     report_data = []
     for root, _, files in os.walk(directory):
@@ -99,7 +99,7 @@ def generate_missing_files_report(directory):
             if not has_log or not has_cue:
                 report_data.append([root, 'Yes' if has_log else 'No', 'Yes' if has_cue else 'No'])
 
-    with open("missing.csv", "w", newline='') as csvfile:
+    with open(os.path.join(output_dir, "missing.csv"), "w", newline='') as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(['Folder', 'Log', 'Cue'])
         csvwriter.writerows(report_data)
@@ -121,15 +121,15 @@ def main():
     files_to_rename, files_to_delete = get_files_to_process(args.dir)
 
     if args.dry_run:
-        generate_report(files_to_rename, files_to_delete, [], [])
+        generate_report(files_to_rename, files_to_delete, [], [], args.dir)
         print(f"Dry run complete. {len(files_to_rename)} files to be renamed and {len(files_to_delete)} files to be deleted.")
     else:
         busy_files_rename = rename_files(files_to_rename)
         busy_files_delete = delete_files(files_to_delete)
-        generate_report(files_to_rename, files_to_delete, busy_files_rename, busy_files_delete)
+        generate_report(files_to_rename, files_to_delete, busy_files_rename, busy_files_delete, args.dir)
         print(f"Operation complete. {len(files_to_rename)} files renamed, {len(files_to_delete)} files deleted, and {len(busy_files_rename) + len(busy_files_delete)} files could not be processed due to being busy.")
 
-    generate_missing_files_report(args.dir)
+    generate_missing_files_report(args.dir, args.dir)
     print("Missing files report generated.")
     
 if __name__ == "__main__":

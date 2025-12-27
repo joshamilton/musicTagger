@@ -134,6 +134,9 @@ def main():
         print("Error: You must specify either --dir or --file-list.")
         return
 
+    # Determine output directory for reports
+    output_dir = args.dir if args.dir else os.path.dirname(args.file_list)
+
     flac_files = []
     if args.file_list:
         files_to_convert = read_file_list(args.file_list)
@@ -156,14 +159,14 @@ def main():
 
         # Write failed paths to a CSV file
         if failed_paths:
-            with open('failure.csv', 'w', newline='') as csvfile:
+            with open(os.path.join(output_dir, 'failure.csv'), 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 for file_path in sorted(failed_paths):
                     writer.writerow([file_path]) 
                 print(f"Found {len(failed_paths)} files with errors. Corrupt or unreadable files logged to failure.csv.")
 
     if args.dry_run:
-        with open("convert.csv", "w", newline='') as csvfile:
+        with open(os.path.join(output_dir, "convert.csv"), "w", newline='') as csvfile:
             fieldnames = ['file_path', 'bit_depth', 'sample_rate']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
@@ -194,7 +197,7 @@ def main():
                 errors.append((file, str(e)))
 
         if errors:
-            with open("errors.csv", "w", newline='') as csvfile:
+            with open(os.path.join(output_dir, "errors.csv"), "w", newline='') as csvfile:
                 fieldnames = ['file_path', 'error']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
