@@ -23,13 +23,15 @@
 
 import argparse
 import csv
+import io
+import math
 import os
 import re
 import sys
 
 from PIL import Image # 1: convert images to jpg
 from fpdf import FPDF # 2: create a PDF from images
-from pypdf import PdfWriter # 3: merge PDFs
+from pypdf import PdfReader, PdfWriter # 3: merge / inspect / rewrite PDFs
 from tqdm import tqdm
 
 ## Temporary fix while developing. Will be removed when the project is made into a package.
@@ -68,6 +70,34 @@ def collect_files(directory, valid_extensions):
     return image_files, pdf_files
 
 
+SANE_DPI_MIN = 36
+SANE_DPI_MAX = 1200
+DEFAULT_DPI = 72
+
+
+def sane_dpi(value):
+    """
+    Clamp a DPI value to a physically reasonable range.
+
+    Some images (especially scans) carry bogus DPI metadata (e.g. 1) which,
+    when used to compute PDF page dimensions, produces pages hundreds of
+    inches wide. Treat anything outside the sane range as the default.
+
+    Args:
+        value: The reported DPI value (any type).
+
+    Returns:
+        tuple: (sane_value, was_clamped)
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_DPI, True
+    if not math.isfinite(v) or v < SANE_DPI_MIN or v > SANE_DPI_MAX:
+        return DEFAULT_DPI, True
+    return v, False
+
+
 def create_image_pdf(image_files, temp_image_pdf, logger):
     """
     Create a temporary PDF from image files.
@@ -92,10 +122,19 @@ def create_image_pdf(image_files, temp_image_pdf, logger):
                 image.save(temp_image_path, format="JPEG")
                 image_file = temp_image_path  # Use the converted file
 
-            # Get image dimensions in points (1 point = 1/72 inch)
+            # Get image dimensions in points (1 point = 1/72 inch).
+            # Clamp DPI to a sane range so bogus metadata (e.g. dpi=1)
+            # doesn't blow page sizes up to hundreds of inches.
             width, height = image.size
-            width_pt = width * 72 / image.info.get("dpi", (72, 72))[0]
-            height_pt = height * 72 / image.info.get("dpi", (72, 72))[1]
+            raw_dpi = image.info.get("dpi", (DEFAULT_DPI, DEFAULT_DPI))
+            dpi_x, clamped_x = sane_dpi(raw_dpi[0])
+            dpi_y, clamped_y = sane_dpi(raw_dpi[1])
+            if clamped_x or clamped_y:
+                logger.warning(
+                    f"Clamped suspicious DPI {raw_dpi} to ({dpi_x}, {dpi_y}) for {image_file}"
+                )
+            width_pt = width * 72 / dpi_x
+            height_pt = height * 72 / dpi_y
 
             # Add a page with the exact dimensions of the image
             pdf.add_page(format=(width_pt, height_pt))
@@ -177,6 +216,168 @@ def create_scans(subdirectory_path, dry_run, writer, logger):
 
     delete_original_files(image_files + pdf_files, logger)
     logger.info(f"Scans.pdf created at: {output_path}")
+
+
+################################################################################
+### Define functions for fixing oversized Scans.pdf files
+################################################################################
+
+# PDF coordinates are points (1 pt = 1/72 inch). 14400 pt = 200 in, which is
+# also the historical PDF 1.x maximum page side. Anything larger is almost
+# certainly the bogus-DPI bug from create_image_pdf and should be repaired.
+OVERSIZE_LIMIT_PT = 14400
+
+
+def find_oversized_pages(pdf_path):
+    """
+    Identify pages whose MediaBox is wider or taller than OVERSIZE_LIMIT_PT.
+
+    Args:
+        pdf_path (str): Path to the PDF file.
+
+    Returns:
+        list: Tuples of (page_index, width_pt, height_pt) for offending pages.
+    """
+    reader = PdfReader(pdf_path)
+    oversized = []
+    for index, page in enumerate(reader.pages):
+        mb = page.mediabox
+        width_pt = float(mb.width)
+        height_pt = float(mb.height)
+        if width_pt > OVERSIZE_LIMIT_PT or height_pt > OVERSIZE_LIMIT_PT:
+            oversized.append((index, width_pt, height_pt))
+    return oversized
+
+
+def rebuild_oversized_page(page):
+    """
+    Extract the single embedded image from a page so it can be re-rendered
+    onto a sanely-sized page.
+
+    Args:
+        page: A pypdf PageObject.
+
+    Returns:
+        tuple or None: (image_bytes, format, width_px, height_px) when the
+        page contains exactly one embedded image; otherwise None.
+    """
+    try:
+        images = list(page.images)
+    except Exception:
+        return None
+    if len(images) != 1:
+        return None
+    image_file = images[0]
+    pil = image_file.image
+    width_px, height_px = pil.size
+    fmt = (pil.format or "PNG").upper()
+    if fmt == "JPEG":
+        save_kwargs = {"format": "JPEG", "quality": 95}
+    else:
+        fmt = "PNG"
+        save_kwargs = {"format": "PNG"}
+    buf = io.BytesIO()
+    pil.save(buf, **save_kwargs)
+    return buf.getvalue(), fmt, width_px, height_px
+
+
+def _build_replacement_page_pdf(image_bytes, fmt, width_px, height_px):
+    """
+    Build a single-page PDF (in memory) sized to the image's pixel dims at
+    72 dpi, with the image filling the page.
+
+    Returns:
+        bytes: The PDF file contents.
+    """
+    width_pt = float(width_px)
+    height_pt = float(height_px)
+    pdf = FPDF(unit="pt")
+    pdf.add_page(format=(width_pt, height_pt))
+    suffix = ".jpg" if fmt == "JPEG" else ".png"
+    image_stream = io.BytesIO(image_bytes)
+    image_stream.name = f"replacement{suffix}"
+    pdf.image(image_stream, x=0, y=0, w=width_pt, h=height_pt)
+    return bytes(pdf.output())
+
+
+def fix_scans_pdf(pdf_path, dry_run, writer, logger):
+    """
+    Detect (and optionally repair) a Scans.pdf with oversized pages.
+
+    In dry-run mode, log and CSV-record each offending page without writing
+    to disk. Otherwise, rebuild any oversized image-only page at its image's
+    natural size (72 dpi); pass other pages through unchanged. The fixed
+    file is written next to the original and atomically swapped in.
+
+    Args:
+        pdf_path (str): Path to the Scans.pdf to inspect.
+        dry_run (bool): If True, only report; do not modify files.
+        writer (csv.writer): CSV writer for action records.
+        logger (logging.Logger): Logger object.
+
+    Returns:
+        None
+    """
+    try:
+        oversized = find_oversized_pages(pdf_path)
+    except Exception as e:
+        logger.error(f"Error reading PDF {pdf_path}: {e}")
+        return
+
+    if not oversized:
+        logger.info(f"OK (no oversized pages): {pdf_path}")
+        return
+
+    if dry_run:
+        logger.info(f"Dry run: {len(oversized)} oversized page(s) in {pdf_path}")
+        for index, width_pt, height_pt in oversized:
+            logger.info(
+                f"  - page {index + 1}: {width_pt:.0f} x {height_pt:.0f} pt"
+            )
+            writer.writerow([pdf_path, index + 1, f"{width_pt:.0f}", f"{height_pt:.0f}"])
+        return
+
+    oversized_indices = {i for i, _, _ in oversized}
+    try:
+        reader = PdfReader(pdf_path)
+        out_writer = PdfWriter()
+        fixed = 0
+        passed_through = 0
+        for index, page in enumerate(reader.pages):
+            if index in oversized_indices:
+                rebuilt = rebuild_oversized_page(page)
+                if rebuilt is not None:
+                    image_bytes, fmt, width_px, height_px = rebuilt
+                    new_pdf_bytes = _build_replacement_page_pdf(
+                        image_bytes, fmt, width_px, height_px
+                    )
+                    new_reader = PdfReader(io.BytesIO(new_pdf_bytes))
+                    out_writer.add_page(new_reader.pages[0])
+                    fixed += 1
+                    logger.info(
+                        f"Rebuilt page {index + 1} of {pdf_path} at {width_px} x {height_px} pt"
+                    )
+                    continue
+                logger.warning(
+                    f"Page {index + 1} of {pdf_path} is oversized but could not be rebuilt; passing through"
+                )
+            out_writer.add_page(page)
+            passed_through += 1
+
+        fixed_path = pdf_path + ".fixed"
+        with open(fixed_path, "wb") as f:
+            out_writer.write(f)
+        os.replace(fixed_path, pdf_path)
+        logger.info(
+            f"Fixed {pdf_path}: rebuilt {fixed} page(s), passed through {passed_through} page(s)"
+        )
+    except Exception as e:
+        logger.error(f"Error fixing PDF {pdf_path}: {e}")
+        try:
+            if os.path.exists(pdf_path + ".fixed"):
+                os.remove(pdf_path + ".fixed")
+        except Exception:
+            pass
 
 
 ################################################################################
@@ -327,8 +528,9 @@ def cleanup_directory(subdirectory_path, dry_run, writer, logger):
 def main():
     parser = argparse.ArgumentParser(description="Utility script for organizing audio files.")
     parser.add_argument('--dir', required=True, help="Path to the root directory to process.")
-    parser.add_argument('--mode', required=True, choices=['make_scans', 'rename_dirs', 'cleanup', 'all'],
-                        help="Mode of operation: make_scans, rename_dirs, cleanup, or all.")
+    parser.add_argument('--mode', required=True,
+                        choices=['make_scans', 'fix_scans', 'rename_dirs', 'cleanup', 'all'],
+                        help="Mode of operation: make_scans, fix_scans, rename_dirs, cleanup, or all.")
     parser.add_argument('--dry-run', action='store_true', help="Perform a dry run without making changes.")
     parser.add_argument('--output-csv', help="Path to the output CSV file (default: output.csv).")
     args = parser.parse_args()
@@ -357,6 +559,15 @@ def main():
             writer.writerow(["Directory", "Included Files"])
             for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for Scans.pdf"):
                 create_scans(subdirectory_path, args.dry_run, writer, logger)
+            writer.writerow([])  # Add a blank line between modes
+
+        if args.mode in ['fix_scans', 'all']:
+            writer.writerow(["Mode: fix_scans"])
+            writer.writerow(["PDF", "Page", "Width (pt)", "Height (pt)"])
+            for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for fix_scans"):
+                pdf_path = os.path.join(subdirectory_path, "Scans.pdf")
+                if os.path.isfile(pdf_path):
+                    fix_scans_pdf(pdf_path, args.dry_run, writer, logger)
             writer.writerow([])  # Add a blank line between modes
 
         if args.mode in ['rename_dirs', 'all']:

@@ -116,15 +116,16 @@ The `structure.py` script organizes and cleans up album directories. It supports
 
 #### Usage
 ```bash
-python utils/structure.py --dir "path/to/music/files" --mode [make_scans|rename_dirs|cleanup|all] [--dry-run] [--output-csv "output.csv"]
+python utils/structure.py --dir "path/to/music/files" --mode [make_scans|fix_scans|rename_dirs|cleanup|all] [--dry-run] [--output-csv "output.csv"]
 ```
 
 - `--dir`: Directory to process (required).
 - `--mode`: Mode of operation (required). Options:
   - `make_scans`: Creates `Scans.pdf` for each subdirectory and deletes original image and PDF files.
+  - `fix_scans`: Detects and repairs existing `Scans.pdf` files whose pages are absurdly oversized due to bogus image DPI metadata.
   - `rename_dirs`: Renames disc folders based on audio file content and naming patterns.
   - `cleanup`: Removes unnecessary files and empty directories.
-  - `all`: Combines all modes into a single operation.
+  - `all`: Combines all modes into a single operation (run in the order `make_scans` -> `fix_scans` -> `rename_dirs` -> `cleanup`).
 - `--dry-run`: Logs actions without making changes.
 - `--output-csv`: Path to the output CSV file summarizing all actions (default: `output.csv`).
 
@@ -133,21 +134,28 @@ python utils/structure.py --dir "path/to/music/files" --mode [make_scans|rename_
    - Combines image and PDF files in each subdirectory into a single `Scans.pdf`.
    - Deletes the original files after creating the PDF.
    - Logs included files to the CSV file.
+   - Image DPI metadata is clamped to a sane range (36-1200) before computing page dimensions, so a bogus value like `dpi=1` no longer produces a 700-inch-wide page.
 
-2. **`rename_dirs`**:
+2. **`fix_scans`**:
+   - Scans every `Scans.pdf` under `--dir` and flags any page wider or taller than 200 inches (14400 pt).
+   - Rebuilds each offending page from its embedded image at its natural pixel size (72 dpi). Pages that are not oversized, or that don't contain a single embedded image (e.g. merged-in booklet PDFs), are passed through unchanged.
+   - The fixed file is written next to the original and atomically swapped in.
+   - With `--dry-run`, only reports offending pages with current dimensions; no files are modified.
+
+3. **`rename_dirs`**:
    - Renames disc folders to a standardized format (`Disc #`) based on audio file content.
    - Generates a CSV file with mappings of original folder names to revised names.
 
-3. **`cleanup`**:
+4. **`cleanup`**:
    - Removes files that do not match allowed extensions (`.pdf`, `.log`, `.cue`, `.flac`, `.ape`, `.wv`, `.wav`).
    - Removes empty directories.
    - Logs deleted files and directories to the CSV file.
 
-4. **`all`**:
-   - Combines `make_scans`, `rename_dirs`, and `cleanup` into a single operation.
+5. **`all`**:
+   - Combines `make_scans`, `fix_scans`, `rename_dirs`, and `cleanup` into a single operation, in that order, so any newly-created `Scans.pdf` is also checked/repaired before the later modes run.
    - Logs all actions to the CSV file, separated by mode.
 
-5. **`--dry-run`**:
+6. **`--dry-run`**:
    - Generates a report of actions without making any changes.
 
 #### CSV Output
