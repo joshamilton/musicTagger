@@ -88,21 +88,35 @@ def convert_flac(file_path, output_path):
     Args:
         file_path (str): Path to the input FLAC file.
         output_path (str): Path to the output FLAC file.
+
+    Returns:
+        tuple: (error, warning)
+            error: str if sox failed (non-zero exit, or missing/empty output);
+                   None on success.
+            warning: str of sox's stderr text if sox succeeded but emitted
+                     non-fatal messages (e.g. "dither clipped N samples");
+                     None otherwise.
     """
     command = [
-        'sox', file_path, 
-        '-G', 
-        '-b', '16', 
-        output_path, 
-        'rate', '-v', '-L', '44100', 
+        'sox', file_path,
+        '-G',
+        '-b', '16',
+        output_path,
+        'rate', '-v', '-L', '44100',
         'dither'
     ]
     result = subprocess.run(command, capture_output=True, text=True)
+    stderr = result.stderr.strip()
+
     if result.returncode != 0:
-        return result.stderr.strip()
-    if result.stderr:
-        return result.stderr.strip()
-    return None
+        return stderr or f"sox exited with code {result.returncode}", None
+
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
+        return stderr or "sox produced no output file", None
+
+    if stderr:
+        return None, stderr
+    return None, None
 
 def get_file_size(file_path):
     """
@@ -178,15 +192,23 @@ def main():
         print(f"Total size of files to convert: {total_size_to_convert / (1024 * 1024):.2f} MB")
     else:
         errors = []
+        warnings = []
         total_space_saved = 0
         for file, _, _ in tqdm(files_to_convert, desc="Converting files"):
             try:
                 original_size = get_file_size(file)
                 output_path = file.replace('.flac', '_converted.flac')
-                result = convert_flac(file, output_path)
-                if result: # non-empty result indicates an error
-                    errors.append((file, result))
+                error, warning = convert_flac(file, output_path)
+                if error:
+                    errors.append((file, error))
+                    if os.path.isfile(output_path):
+                        try:
+                            os.remove(output_path)
+                        except OSError:
+                            pass
                     continue
+                if warning:
+                    warnings.append((file, warning))
                 converted_size = get_file_size(output_path)
                 space_saved = original_size - converted_size
                 total_space_saved += space_saved
@@ -206,9 +228,19 @@ def main():
             print(f"Conversion complete with errors. Errors logged to errors.csv.")
         else:
             print(f"Conversion complete. All files processed successfully.")
-        
+
+        if warnings:
+            with open(os.path.join(output_dir, "warnings.csv"), "w", newline='') as csvfile:
+                fieldnames = ['file_path', 'warning']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                for file, warning in warnings:
+                    writer.writerow({'file_path': file, 'warning': warning})
+            print(f"{len(warnings)} file(s) emitted sox warnings (still converted). Logged to warnings.csv.")
+
         print(f"Files successfully converted: {len(files_to_convert) - len(errors)}")
         print(f"Files with errors: {len(errors)}")
+        print(f"Files with warnings: {len(warnings)}")
         print(f"Total disk space saved: {total_space_saved / (1024 * 1024):.2f} MB")
 
 if __name__ == "__main__":
