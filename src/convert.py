@@ -12,7 +12,6 @@
 ### Import packages
 ################################################################################
 
-import argparse
 import csv
 import os
 import subprocess
@@ -130,36 +129,28 @@ def get_file_size(file_path):
     """
     return os.path.getsize(file_path)
 
-
-
 ################################################################################
-### Define main function
+### Define run function
 ################################################################################
 
-def main():
-    parser = argparse.ArgumentParser(description="Convert FLAC files from 24 bit to 16 bit 44 kHz.")
-    parser.add_argument('--dir', help="Directory to scan for FLAC files.")
-    parser.add_argument('--file-list', help="CSV file containing a list of files to convert.")
-    parser.add_argument('--dry-run', action='store_true', help="Generate a report of files to convert without converting.")
-    parser.add_argument('--overwrite', action='store_true', help="Overwrite the original files after conversion.")
-    args = parser.parse_args()
+def run(args):
+    """
+    Convert FLAC files to 16 bit 44 kHz using SoX.
 
-    if not args.dir and not args.file_list:
-        print("Error: You must specify either --dir or --file-list.")
-        return
-
+    Args:
+        args (argparse.Namespace): Parsed arguments with dir, file_list, dry_run, overwrite.
+    """
     # Determine output directory for reports
     output_dir = args.dir if args.dir else os.path.dirname(args.file_list)
 
-    flac_files = []
+    total_size_to_convert = 0
     if args.file_list:
         files_to_convert = read_file_list(args.file_list)
     elif args.dir:
         flac_files = get_flac_files(args.dir)
-    
+
         files_to_convert = []
-        total_size_to_convert = 0
-        failed_paths = [] # List to store files with errors
+        failed_paths = []  # List to store files with errors
 
         for file_path in flac_files:
             metadata = check_flac_metadata(file_path)
@@ -176,7 +167,7 @@ def main():
             with open(os.path.join(output_dir, 'failure.csv'), 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 for file_path in sorted(failed_paths):
-                    writer.writerow([file_path]) 
+                    writer.writerow([file_path])
                 print(f"Found {len(failed_paths)} files with errors. Corrupt or unreadable files logged to failure.csv.")
 
     if args.dry_run:
@@ -186,7 +177,7 @@ def main():
             writer.writeheader()
             for file, bit_depth, sample_rate in sorted(files_to_convert):
                 writer.writerow({'file_path': file, 'bit_depth': bit_depth, 'sample_rate': sample_rate})
-        
+
         print(f"Dry run complete. List of files saved to convert.csv.")
         print(f"Files to convert: {len(files_to_convert)}")
         print(f"Total size of files to convert: {total_size_to_convert / (1024 * 1024):.2f} MB")
@@ -242,6 +233,3 @@ def main():
         print(f"Files with errors: {len(errors)}")
         print(f"Files with warnings: {len(warnings)}")
         print(f"Total disk space saved: {total_space_saved / (1024 * 1024):.2f} MB")
-
-if __name__ == "__main__":
-    main()

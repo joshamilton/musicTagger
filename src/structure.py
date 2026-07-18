@@ -21,23 +21,18 @@
 ### Import packages
 ################################################################################
 
-import argparse
 import csv
 import io
 import math
 import os
 import re
-import sys
 
 from PIL import Image # 1: convert images to jpg
 from fpdf import FPDF # 2: create a PDF from images
 from pypdf import PdfReader, PdfWriter # 3: merge / inspect / rewrite PDFs
 from tqdm import tqdm
 
-## Temporary fix while developing. Will be removed when the project is made into a package.
-# Add the project root directory to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.utils import setup_logging
+from utils import setup_logging
 
 ################################################################################
 ### Define functions for creating Scans.pdf
@@ -522,26 +517,19 @@ def cleanup_directory(subdirectory_path, dry_run, writer, logger):
                         logger.error(f"Error removing directory {dir_path}: {e}")
 
 ################################################################################
-### Define main function
+### Define run function
 ################################################################################
 
-def main():
-    parser = argparse.ArgumentParser(description="Utility script for organizing audio files.")
-    parser.add_argument('--dir', required=True, help="Path to the root directory to process.")
-    parser.add_argument('--mode', required=True,
-                        choices=['make_scans', 'fix_scans', 'rename_dirs', 'cleanup', 'all'],
-                        help="Mode of operation: make_scans, fix_scans, rename_dirs, cleanup, or all.")
-    parser.add_argument('--dry-run', action='store_true', help="Perform a dry run without making changes.")
-    parser.add_argument('--output-csv', help="Path to the output CSV file (default: output.csv).")
-    args = parser.parse_args()
+def run(args):
+    """
+    Organize album directories: Scans.pdf, disc folder renaming, and cleanup.
 
+    Args:
+        args (argparse.Namespace): Parsed arguments with dir, mode, dry_run, output_csv.
+    """
     # Set up logging in the root project directory
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     logger = setup_logging(root_dir)
-
-    if not os.path.isdir(args.dir):
-        print(f"Error: The directory '{args.dir}' does not exist.")
-        return
 
     # Set default output CSV path if not provided
     output_csv = args.output_csv or os.path.join(args.dir, "output.csv")
@@ -585,6 +573,3 @@ def main():
             writer.writerow([])  # Add a blank line between modes
 
     print(f"Processing complete. Output written to {output_csv}.")
-
-if __name__ == "__main__":
-    main()

@@ -14,7 +14,6 @@
 ################################################################################
 import csv
 import os
-import argparse
 from tqdm import tqdm
 
 ################################################################################
@@ -105,19 +104,16 @@ def generate_missing_files_report(directory, output_dir):
         csvwriter.writerows(report_data)
 
 ################################################################################
-### Define main function
+### Define run function
 ################################################################################
 
-def main():
-    parser = argparse.ArgumentParser(description="Cleanup script for music files.")
-    parser.add_argument('--dir', required=True, help="Input directory to process")
-    parser.add_argument('--dry-run', action='store_true', help="Generate a report without making changes")
-    args = parser.parse_args()
+def run(args):
+    """
+    Run cleanup: rename uppercase extensions, delete non-music files, report missing cues/logs.
 
-    if not os.path.isdir(args.dir):
-        print(f"Error: The directory '{args.dir}' does not exist.")
-        return
-
+    Args:
+        args (argparse.Namespace): Parsed arguments with dir and dry_run.
+    """
     files_to_rename, files_to_delete = get_files_to_process(args.dir)
 
     if args.dry_run:
@@ -131,6 +127,3 @@ def main():
 
     generate_missing_files_report(args.dir, args.dir)
     print("Missing files report generated.")
-    
-if __name__ == "__main__":
-    main()
