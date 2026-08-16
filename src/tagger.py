@@ -14,6 +14,7 @@ import pandas as pd
 import cleanup
 import convert
 import read
+import standardize
 import structure
 import write
 from predict import DataManager
@@ -32,6 +33,7 @@ def validate_inputs(args):
     For cleanup: ensures that a valid directory path is given
     For convert: ensures that either a valid directory or file list is given
     For structure: ensures that a valid directory path is given
+    For standardize: ensures that either a valid directory or file list is given
 
     Args:
         args (argparse.Namespace): Parsed command-line arguments.
@@ -68,6 +70,26 @@ def validate_inputs(args):
     elif args.command == 'structure':
         if not args.dir or not os.path.isdir(args.dir):
             raise ValueError("Invalid or missing directory path containing music files.")
+    elif args.command == 'standardize':
+        if not args.dir and not args.file_list:
+            raise ValueError("You must specify either --dir or --file-list.")
+        if args.dir and not os.path.isdir(args.dir):
+            raise ValueError("Invalid or missing directory path containing music files.")
+        if args.file_list and not os.path.isfile(args.file_list):
+            raise ValueError("Invalid or missing file list path.")
+        if args.dry_run and args.file_list:
+            raise ValueError("Do not combine --dry-run with --file-list.")
+        if args.dry_run and not args.output_file:
+            raise ValueError("--output-file is required when using --dry-run.")
+        if args.output_file:
+            output_dir = os.path.dirname(args.output_file) or '.'
+            if not os.path.isdir(output_dir):
+                raise ValueError("Invalid or missing directory for --output-file.")
+        # Retag mapping CSVs require --dir; rename CSVs do not.
+        if args.file_list and not args.dry_run:
+            kind = standardize.detect_file_list_kind(args.file_list)
+            if kind == 'retag' and (not args.dir or not os.path.isdir(args.dir)):
+                raise ValueError("Retag --file-list requires a valid --dir.")
     else:
         raise ValueError("Invalid command.")
     
@@ -120,6 +142,26 @@ def main():
     structure_parser.add_argument('--output-csv',
                                   help='Path to the output CSV file (default: output.csv in --dir)')
 
+    standardize_parser = subparsers.add_parser(
+        'standardize',
+        help='Normalize disc/album folders and retag from mapping CSVs',
+    )
+    standardize_parser.add_argument('--dir', '-d',
+                                    help='Directory containing music files')
+    standardize_parser.add_argument(
+        '--file-list',
+        help=(
+            'CSV to apply: rename plan (path, original_name, new_name) or '
+            'retag map (original_*/new_*); retag requires --dir'
+        ),
+    )
+    standardize_parser.add_argument('--dry-run', action='store_true',
+                                    help='Write planned/flagged renames without making changes')
+    standardize_parser.add_argument(
+        '--output-file',
+        help='CSV report of planned/flagged renames (required with --dry-run)',
+    )
+
     args = parser.parse_args()
 
     try:
@@ -153,6 +195,9 @@ def main():
 
         elif args.command == 'structure':
             structure.run(args)
+
+        elif args.command == 'standardize':
+            standardize.run(args)
 
     except Exception as e:
         print(f"Error: {str(e)}", file=sys.stderr)

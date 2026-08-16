@@ -51,7 +51,7 @@ def read_file_list(file_list_path):
     """
     files_to_convert = []
     try:
-        with open(file_list_path, 'r') as csvfile:
+        with open(file_list_path, 'r', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 file_path = row['file_path']
@@ -164,14 +164,14 @@ def run(args):
 
         # Write failed paths to a CSV file
         if failed_paths:
-            with open(os.path.join(output_dir, 'failure.csv'), 'w', newline='') as csvfile:
+            with open(os.path.join(output_dir, 'failure.csv'), 'w', newline='', encoding='utf-8-sig') as csvfile:
                 writer = csv.writer(csvfile)
                 for file_path in sorted(failed_paths):
                     writer.writerow([file_path])
                 print(f"Found {len(failed_paths)} files with errors. Corrupt or unreadable files logged to failure.csv.")
 
     if args.dry_run:
-        with open(os.path.join(output_dir, "convert.csv"), "w", newline='') as csvfile:
+        with open(os.path.join(output_dir, "convert.csv"), "w", newline='', encoding='utf-8-sig') as csvfile:
             fieldnames = ['file_path', 'bit_depth', 'sample_rate']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
@@ -210,7 +210,7 @@ def run(args):
                 errors.append((file, str(e)))
 
         if errors:
-            with open(os.path.join(output_dir, "errors.csv"), "w", newline='') as csvfile:
+            with open(os.path.join(output_dir, "errors.csv"), "w", newline='', encoding='utf-8-sig') as csvfile:
                 fieldnames = ['file_path', 'error']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
@@ -221,7 +221,7 @@ def run(args):
             print(f"Conversion complete. All files processed successfully.")
 
         if warnings:
-            with open(os.path.join(output_dir, "warnings.csv"), "w", newline='') as csvfile:
+            with open(os.path.join(output_dir, "warnings.csv"), "w", newline='', encoding='utf-8-sig') as csvfile:
                 fieldnames = ['file_path', 'warning']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()

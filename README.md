@@ -17,9 +17,9 @@ The tool was written to reflect my personal idiosyncrasies in tagging classical 
   - Year Recorded
   - Orchestra
   - Conductor
-  - Soloist
+  - Soloists
   - Genre
-  - Disc and Track Numbers
+  - DiscNumber and TrackNumber
   - Work metadata (opus numbers, catalog numbers, keys, etc.)
 - Supports batch updates from Excel files
 - Preserves unicode characters in tags
@@ -27,6 +27,7 @@ The tool was written to reflect my personal idiosyncrasies in tagging classical 
 - Cleans up non-music files and normalizes extensions
 - Converts high-resolution FLAC files to 16-bit 44 kHz
 - Organizes album directories (Scans.pdf, disc folders, cleanup)
+- Standardizes disc folder names to `Disc N` with shared zero-padding
 
 ## Prerequisites
 
@@ -41,6 +42,38 @@ cd musicTagger
 mamba env create -f musicTagger.yaml 
 mamba activate musicTagger
 ```
+
+## Tag Fields
+`write` writes each non-empty Excel column as a FLAC Vorbis comment using these exact field names:
+
+## Work Metadata
+- `Work`: The main musical work (e.g. "Symphony", "String Quartet")
+- `Work Number`: Numerical designation (e.g. "No 41")
+- `InitialKey`: Key signature (e.g. "C major", "E-flat")
+- `Catalog #`: Standard catalog reference (e.g. "K 551", "BWV 1046")
+- `Opus`: Opus designation (e.g. "Op 55")
+- `Opus Number`: Sub-designation within opus (e.g. "No 1")
+- `Epithet`: Common name (e.g. "Jupiter", "Eroica")
+- `Movement`: Movement number and tempo (e.g. "I. Allegro con brio")
+- `Title`: Always reconstructed by `write` from the work fields above (any `Title` column in the Excel is overwritten). Present parts are joined in this order:
+
+  `Work`, `Work Number`, `Catalog #`, `Opus`, `Opus Number`, in `InitialKey`, '`Epithet`' - `Movement`
+
+  Example: `Symphony, No 41, K 551, in C major, 'Jupiter' - I. Allegro`
+
+- `TrackTitle`: Optional source/title string from `read` (written if present; not used to build `Title`)
+
+## Recording Metadata
+- `Album`: Full album title
+- `Year Recorded`: Recording year
+- `Orchestra`: Performing ensemble
+- `Conductor`: Conductor name
+- `Soloists`: Soloist(s) name(s)
+- `Arranger`: Arranger name (when present)
+- `Composer`: Composer name
+- `Genre`: Musical period/style
+- `DiscNumber`: For multi-disc sets
+- `TrackNumber`: Position on disc
 
 ## Usage
 All commands are invoked through `python src/tagger.py <command> ...`.
@@ -181,31 +214,90 @@ Arguments:
 #### CSV Output
 The CSV file summarizes all actions performed, or that would be performed in `--dry-run` mode. Each mode is separated by a blank line and includes appropriate headers.
 
-### Tag Fields
-The utility manages the following tag fields:
+### Standardize
+Rename album folders to standard form. Also supports bulk retagging of specific field values.
 
-#### Work Metadata
-- Work: The main musical work (e.g. "Symphony", "String Quartet")
-- Work Number: Numerical designation (e.g. "No 41")
-- Initial Key: Key signature (e.g. "C major", "E-flat")
-- Catalog Number: Standard catalog reference (e.g. "K 551", "BWV 1046")
-- Opus: Opus designation (e.g. "Op 55")
-- Opus Number: Sub-designation within opus (e.g. "No 1")
-- Epithet: Common name (e.g. "Jupiter", "Eroica")
-- Movement: Movement number and tempo (e.g. "I. Allegro con brio")
-- Title: Full title constructed according to the following pattern: 
-  
-  \<Work\> \<Work Number\>, \<Catalog Number\>, \<Opus\>, \<Opus Number\>, in \<Initial Key\>, '\<Epithet\>' - \<Movement\>
+#### Folder renaming
 
-#### Recording Metadata
-- Album: Full album title
-- Year Recorded: Recording year
-- Orchestra: Performing ensemble
-- Conductor: Conductor name
-- Composer: Composer name
-- Genre: Musical period/style
-- Disc Number: For multi-disc sets
-- Track Number: Position on disc
+Scan and rename folders in one step: 
+
+```bash
+python src/tagger.py \
+    standardize \
+    --dir "path/to/music/files"
+```
+
+Standard form for an album folder is:
+
+```text
+[YYYY] Album (performance information)
+```
+
+Performance info follows these templates:
+
+| Tags present | Parenthetical |
+|---|---|
+| Orchestra | `(Orchestra)` |
+| Orchestra + Conductor | `(Orchestra with Conductor)` |
+| Orchestra + Soloist | `(Orchestra with Soloist)` |
+| Soloist | `(Soloist)` |
+| Orchestra + Conductor + Soloist | `(Orchestra with Conductor and Soloist)` |
+| Conductor + Soloist | `(Conductor with Soloist)` |
+
+Other combinations are flagged and not renamed.
+
+Dry-run mode writes one row per planned disc rename, planned album rename, or flagged album:
+
+```bash
+python src/tagger.py \
+    standardize \
+    --dir "path/to/music/files" \
+    --dry-run \
+    --output-file "renames.csv"
+```
+
+Columns:
+
+- `path`: parent directory of the folder to rename
+- `original_name` / `new_name`: folder name
+- `type` (`disc` \| `album`), `status` (`planned` \| `flagged` \| `skipped`), `flag_reason`
+- observed tag summaries and chosen year/album/orchestra/conductor/soloist
+- `performance_info`
+
+Before applying, manually review each row whose `status` is empty, `planned`, or `flagged`. Edit `new_name` when needed. For empty or `flagged` rows you want to apply, set `status` to `planned` (and fill in a `new_name` if it was blank). Rows that are not `planned` are skipped.
+
+Apply the reviewed CSV:
+
+```bash
+python src/tagger.py \
+    standardize \
+    --file-list "renames.csv"
+```
+
+Arguments:
+- `--dir`, `-d`: Directory to scan (required for dry-run, one-pass rename, and retag; optional for rename `--file-list`)
+- `--file-list`: Rename plan CSV or retag map CSV (detected by columns)
+- `--dry-run`: Write planned/flagged renames without making changes (`--output-file` required)
+- `--output-file`: CSV report (required with `--dry-run`)
+
+#### Bulk-retagging
+
+Dry-run mode also writes unique tag lists next to `--output-file`: `{stem}_albums.csv`, `{stem}_orchestras.csv`, `{stem}_conductors.csv`, and `{stem}_soloists.csv`. 
+
+Review those lists to standardize tag spellings before applying renames.
+
+Then apply a reviewed retag map: 
+
+```bash
+python src/tagger.py \
+    standardize \
+    --dir "path/to/music/files" \
+    --file-list "classical_conductors_reviewed.csv"
+```
+
+Only rows with non-empty `new_*` that differ from `original_*` are applied. Album / Orchestra / Conductor use whole-field exact match; Soloists remap matching `;`-separated tokens and rejoin with `; `. If the reviewed CSV includes soloist rows, the remapped Soloists tag is also normalized on every matching file: each person is stored as `Last, First`, exact duplicates are dropped, and the list is sorted alphabetically by last name.
+
+After retagging, any album with at least one changed file is rescanned and its disc/album folders are renamed to match the current tags, following the same `[YYYY] Album (performance information)` convention as a plain `--dir` run above. Albums the retag map didn't touch are left alone.
 
 ### Error Handling
 - Failed tag operations are logged to a separate Excel file

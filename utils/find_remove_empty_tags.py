@@ -51,13 +51,13 @@ def find_files_with_empty_tags(search_dir):
     print(f"Found {len(corrupt_files)} corrupt files")
 
     # Write the list of files to empty_tags.csv
-    with open('empty_tags.csv', 'w', newline='') as csvfile:
+    with open('empty_tags.csv', 'w', newline='', encoding='utf-8-sig') as csvfile:
         writer = csv.writer(csvfile)
         for file_path in sorted(empty_tag_files):
             writer.writerow([file_path])
 
     # Write the list of corrupt files to corrupt_files.csv
-    with open('corrupt_files.csv', 'w', newline='') as csvfile:
+    with open('corrupt_files.csv', 'w', newline='', encoding='utf-8-sig') as csvfile:
         writer = csv.writer(csvfile)
         for file_path in corrupt_files:
             writer.writerow([file_path])
@@ -89,12 +89,12 @@ def remove_empty_tags(files):
     print(f"Successfully processed: {len(successful_paths)} files")
     print(f"Failed: {len(failed_paths)} files")
 
-    with open('success.csv', 'w', newline='') as csvfile:
+    with open('success.csv', 'w', newline='', encoding='utf-8-sig') as csvfile:
         writer = csv.writer(csvfile)
         for file_path in sorted(successful_paths):
             writer.writerow([file_path])
 
-    with open('failure.csv', 'w', newline='') as csvfile:
+    with open('failure.csv', 'w', newline='', encoding='utf-8-sig') as csvfile:
         writer = csv.writer(csvfile)
         for file_path in sorted(failed_paths):
             writer.writerow([file_path])  

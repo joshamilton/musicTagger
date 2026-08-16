@@ -98,7 +98,7 @@ def generate_missing_files_report(directory, output_dir):
             if not has_log or not has_cue:
                 report_data.append([root, 'Yes' if has_log else 'No', 'Yes' if has_cue else 'No'])
 
-    with open(os.path.join(output_dir, "missing.csv"), "w", newline='') as csvfile:
+    with open(os.path.join(output_dir, "missing.csv"), "w", newline='', encoding='utf-8-sig') as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(['Folder', 'Log', 'Cue'])
         csvwriter.writerows(report_data)

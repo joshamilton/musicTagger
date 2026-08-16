@@ -538,7 +538,7 @@ def run(args):
     subdirectories = [os.path.join(args.dir, subdirectory) for subdirectory in sorted(os.listdir(args.dir)) if os.path.isdir(os.path.join(args.dir, subdirectory))]
 
     # Open the CSV file for writing
-    with open(output_csv, mode='w', newline='', encoding='utf-8') as csv_file:
+    with open(output_csv, mode='w', newline='', encoding='utf-8-sig') as csv_file:
         writer = csv.writer(csv_file)
 
         # Process based on the selected mode
