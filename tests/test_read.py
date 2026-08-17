@@ -166,7 +166,7 @@ def test_get_tags_from_file_with_unmatched_album_string(mocker):
     mock_flac = mocker.MagicMock()
     mock_flac.__getitem__.side_effect = lambda x: {
         'album': ['Album'],
-        'year': ['2024'],
+        'year recorded': ['2024'],
         'orchestra': ['Orchestra'],
         'conductor': ['Conductor']
     }[x]
@@ -193,7 +193,7 @@ def test_get_album_fields_from_track_path_unmatched(mocker):
     mock_flac = mocker.MagicMock()
     mock_flac.__getitem__.side_effect = lambda x: {
         'album': ['Album'],
-        'year': ['2024'],
+        'year recorded': ['2024'],
         'orchestra': ['Orchestra'],
         'conductor': ['Conductor']
     }[x]

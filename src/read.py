@@ -50,6 +50,13 @@ def get_flac_files(search_dir):
         raise ValueError("No FLAC files found in the specified directory.")
     return sorted(track_path_list)
 
+ALLOWED_TAGS = [
+    'Composer', 'Album', 'Year Recorded', 'Orchestra', 'Conductor', 'Soloists', 'Arranger',
+    'Genre', 'DiscNumber', 'TrackNumber', 'Title', 'TrackTitle', 'Work', 'Work Number',
+    'InitialKey', 'Catalog #', 'Opus', 'Opus Number', 'Epithet', 'Movement',
+    'track transition duration', 'tool name'
+]
+
 def create_tags_dataframe(track_path_list):
     """
     Create an empty dataframe to store tags for the given tracks.
@@ -60,10 +67,7 @@ def create_tags_dataframe(track_path_list):
     Returns:
         pd.DataFrame: DataFrame with track paths as index and columns for tags.
     """
-    columns = ['Composer', 'Album', 'Year Recorded', 'Orchestra', 'Conductor', 'Soloists', 'Arranger', 
-               'Genre', 'DiscNumber', 'TrackNumber', 'Title', 'TrackTitle', 'Work', 'Work Number', 
-               'InitialKey', 'Catalog #', 'Opus', 'Opus Number', 'Epithet', 'Movement']
-    return pd.DataFrame(index=track_path_list, columns=columns)
+    return pd.DataFrame(index=track_path_list, columns=ALLOWED_TAGS)
 
 def get_tracks_create_dataframe(search_dir):
     """
@@ -230,7 +234,7 @@ def get_tags_from_file_with_unmatched_album_string(track_path):
         album = None
     # Year recorded
     try:
-        year_recorded = audio_file['year'][0]
+        year_recorded = audio_file['year recorded'][0]
     except:
         year_recorded = None
     # Orchestra

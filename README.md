@@ -61,7 +61,7 @@ mamba activate musicTagger
 
   Example: `Symphony, No 41, K 551, in C major, 'Jupiter' - I. Allegro`
 
-- `TrackTitle`: Optional source/title string from `read` (written if present; not used to build `Title`)
+- `TrackTitle`: Optional field for a manually-entered source title (added by JRiver)
 
 ## Recording Metadata
 - `Album`: Full album title
@@ -124,7 +124,9 @@ Arguments:
 - `--store_data`: Archive tag data during operations
 
 ### Cleanup
-Find and remove files that are not FLAC, CUE, LOG, or PDF. Also renames files with uppercase extensions to lowercase and reports albums missing a LOG or CUE file.
+Find and remove files that are not FLAC, CUE, LOG, or PDF. Also renames files with uppercase extensions to lowercase, strips any FLAC tag not in the canonical Tag Fields list, and reports albums missing a LOG or CUE file.
+
+Tags removed are logged to `tags.csv` in `--dir`.
 
 ```bash
 python src/tagger.py \

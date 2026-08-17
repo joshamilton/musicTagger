@@ -254,11 +254,11 @@ def collect_track_tags(album_path):
             except Exception:
                 continue
             tracks.append({
-                'year': get_tag(audio, 'Year Recorded', 'year', 'date'),
+                'year': get_tag(audio, 'Year Recorded'),
                 'album': get_tag(audio, 'Album', 'album'),
                 'orchestra': get_tag(audio, 'Orchestra', 'orchestra'),
                 'conductor': get_tag(audio, 'Conductor', 'conductor'),
-                'soloists': get_tag(audio, 'Soloists', 'Soloist', 'soloists', 'soloist'),
+                'soloists': get_tag(audio, 'Soloists'),
             })
     return tracks
 
@@ -327,8 +327,7 @@ RETAG_KINDS = (
     ('album', 'original_album', 'new_album', ('Album', 'album'), 'Album'),
     ('orchestra', 'original_orchestra', 'new_orchestra', ('Orchestra', 'orchestra'), 'Orchestra'),
     ('conductor', 'original_conductor', 'new_conductor', ('Conductor', 'conductor'), 'Conductor'),
-    ('soloist', 'original_soloist', 'new_soloist',
-     ('Soloists', 'Soloist', 'soloists', 'soloist'), 'Soloists'),
+    ('soloist', 'original_soloist', 'new_soloist', ('Soloists',), 'Soloists'),
 )
 
 
@@ -887,7 +886,7 @@ def normalize_soloists_for_dir(root_dir):
         except Exception as e:
             errors.append(f"{path}: failed to open ({e})")
             continue
-        current = get_tag(audio, 'Soloists', 'Soloist', 'soloists', 'soloist')
+        current = get_tag(audio, 'Soloists')
         if not current:
             continue
         normalized = normalize_soloists_field(current)
