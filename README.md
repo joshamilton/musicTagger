@@ -101,7 +101,6 @@ This will:
 Arguments:
 - `--dir`, `-d`: Directory containing music files (required)
 - `--excel_out`, `-o`: Output Excel file (required)
-- `--store_data`: Archive tag data during operations
 
 ### Writing Tags
 Update tags from an Excel file:
@@ -121,7 +120,6 @@ This will:
 Arguments:
 - `--excel_in`, `-i`: Input Excel file with tags (required)
 - `--excel_out`, `-o`: Output Excel file for failed tags (required)
-- `--store_data`: Archive tag data during operations
 
 ### Cleanup
 Find and remove files that are not FLAC, CUE, LOG, or PDF. Also renames files with uppercase extensions to lowercase, strips any FLAC tag not in the canonical Tag Fields list, and reports albums missing a LOG or CUE file.
@@ -319,17 +317,6 @@ python utils/find_remove_empty_tags.py "path/to/music/files" [--dry-run]
 
 - `dir`: Directory to search for FLAC files.
 - `--dry-run`: Generate a report without removing empty tags.
-
-### SQLite to CSV Script
-The `sqlite_to_csv.py` script converts a SQLite database to a CSV file.
-
-#### Usage
-```bash
-python utils/sqlite_to_csv.py --sqlite_db "path/to/tags.db" --csv_file "output.csv"
-```
-
-- `--sqlite_db`: Path to the SQLite database file.
-- `--csv_file`: Path to the CSV file to write.
 
 ## Testing
 The codebase includes comprehensive unit tests using pytest. Tests cover:

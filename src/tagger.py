@@ -17,7 +17,6 @@ import read
 import standardize
 import structure
 import write
-from predict import DataManager
 
 ################################################################################
 ### Define functions
@@ -104,16 +103,12 @@ def main():
                              help='Directory containing music files')
     read_parser.add_argument('--excel_out', '-o', required=True,
                              help='Excel file path for writing tag information')
-    read_parser.add_argument('--store_data', action='store_true',
-                             help='Archive tag data during operations')
 
     write_parser = subparsers.add_parser('write', help='Write tags to music files')
     write_parser.add_argument('--excel_in', '-i', required=True,
                               help='Excel file path for reading tag information')
     write_parser.add_argument('--excel_out', '-o', required=True,
                               help='Excel file path for writing failed tags')
-    write_parser.add_argument('--store_data', action='store_true',
-                              help='Archive tag data during operations')
 
     cleanup_parser = subparsers.add_parser('cleanup', help='Clean up non-music files and normalize extensions')
     cleanup_parser.add_argument('--dir', '-d', required=True,
@@ -169,20 +164,18 @@ def main():
         validate_inputs(args)
 
         if args.command == 'read':
-            data_mgr = DataManager() if args.store_data else None
             # Create dataframe and get tags
             tags_df = read.get_tracks_create_dataframe(args.dir)
-            tags_df = read.get_tags(tags_df, data_mgr)
+            tags_df = read.get_tags(tags_df)
             # Use XLSXwriter engine to allow for foreign-language characters
             tags_df.to_excel(args.excel_out, engine = 'xlsxwriter')
             print(f"Tags saved to {args.excel_out}")
-            
+
         elif args.command == 'write':
-            data_mgr = DataManager() if args.store_data else None
             # Read tags from Excel and update files
             tags_df = pd.read_excel(args.excel_in, dtype=str, index_col=0)
             tags_df = tags_df.fillna('')
-            successful_df, failed_df = write.update_tags(tags_df, data_mgr)
+            successful_df, failed_df = write.update_tags(tags_df)
             # Use XLSXwriter engine to allow for foreign-language characters
             failed_df.to_excel(args.excel_out, engine = 'xlsxwriter')
             print(f"Failed tags saved to {args.excel_out}")

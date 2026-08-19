@@ -20,7 +20,7 @@ from tqdm import tqdm  # For better progress tracking
 ################################################################################
 
 ### Update tags
-def update_tags(tags_df, data_mgr = None):
+def update_tags(tags_df):
     """
     Update tags by reading from an Excel file.
 
@@ -97,12 +97,8 @@ def update_tags(tags_df, data_mgr = None):
            # Save results
             audio_file.save()
 
-            # Update tracking and DataManager object
+            # Update tracking
             successful_paths.append(file_path)
-            if data_mgr:
-                audio_file = mutagen.flac.FLAC(file_path)
-                all_tags = dict(audio_file.tags)
-                data_mgr.save_updated_tags(file_path, all_tags)
 
             # Rename the track
             track_number = row.get('TrackNumber', '')
