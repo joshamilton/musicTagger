@@ -19,7 +19,7 @@ from tqdm import tqdm  # For better progress tracking
 ################################################################################
 
 # Import the setup_logging function
-from utils import setup_logging
+from utils import setup_logging, find_flac_files
 # Initialize the logger
 logger = setup_logging(os.getcwd())
 
@@ -41,14 +41,10 @@ def get_flac_files(search_dir):
     Raises:
         ValueError: If no FLAC files are found in the directory.
     """
-    track_path_list = []
-    for dirpath, dirnames, filenames in os.walk(search_dir):
-        for file in filenames:
-            if file.endswith('.flac'):
-                track_path_list.append(os.path.join(dirpath, file))
+    track_path_list = find_flac_files(search_dir)
     if not track_path_list:
         raise ValueError("No FLAC files found in the specified directory.")
-    return sorted(track_path_list)
+    return track_path_list
 
 ALLOWED_TAGS = [
     'Composer', 'Album', 'Year Recorded', 'Orchestra', 'Conductor', 'Soloists', 'Arranger',

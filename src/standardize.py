@@ -19,6 +19,8 @@ from collections import Counter, defaultdict
 from mutagen.flac import FLAC
 from tqdm import tqdm
 
+from utils import find_flac_files
+
 ################################################################################
 ### Constants
 ################################################################################
@@ -812,22 +814,6 @@ def compute_retag_updates(audio, mappings):
         elif current in kind_map:
             updates[write_key] = kind_map[current]
     return updates
-
-
-def find_flac_files(root_dir):
-    """
-    Return sorted paths of all .flac files under root_dir.
-
-    Shows an indeterminate progress bar while walking (file count unknown a priori).
-    """
-    paths = []
-    with tqdm(desc="Finding FLAC files", unit="file") as pbar:
-        for dirpath, _, filenames in os.walk(root_dir):
-            for name in filenames:
-                if name.lower().endswith('.flac'):
-                    paths.append(os.path.join(dirpath, name))
-                    pbar.update(1)
-    return sorted(paths)
 
 
 def apply_retag_mappings(root_dir, mappings):

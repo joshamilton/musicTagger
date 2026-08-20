@@ -11,6 +11,7 @@ import argparse
 import os
 import sys
 import pandas as pd
+import catalog
 import cleanup
 import convert
 import read
@@ -33,6 +34,8 @@ def validate_inputs(args):
     For convert: ensures that either a valid directory or file list is given
     For structure: ensures that a valid directory path is given
     For standardize: ensures that either a valid directory or file list is given
+    For catalog: ensures that a valid directory path is given, and that the
+        database and CSV output paths are valid
 
     Args:
         args (argparse.Namespace): Parsed command-line arguments.
@@ -89,6 +92,19 @@ def validate_inputs(args):
             kind = standardize.detect_file_list_kind(args.file_list)
             if kind == 'retag' and (not args.dir or not os.path.isdir(args.dir)):
                 raise ValueError("Retag --file-list requires a valid --dir.")
+    elif args.command == 'catalog':
+        if not args.dir or not os.path.isdir(args.dir):
+            raise ValueError("Invalid or missing directory path containing music files.")
+        if not args.db:
+            raise ValueError("Invalid or missing path for the catalog database.")
+        db_dir = os.path.dirname(args.db) or '.'
+        if not os.path.isdir(db_dir):
+            raise ValueError("Invalid or missing path for the catalog database.")
+        if not args.csv:
+            raise ValueError("Invalid or missing path for the catalog CSV export.")
+        csv_dir = os.path.dirname(args.csv) or '.'
+        if not os.path.isdir(csv_dir):
+            raise ValueError("Invalid or missing path for the catalog CSV export.")
     else:
         raise ValueError("Invalid command.")
     
@@ -157,6 +173,19 @@ def main():
         help='CSV report of planned/flagged renames (required with --dry-run)',
     )
 
+    catalog_parser = subparsers.add_parser(
+        'catalog',
+        help='Build/update a database and CSV catalog of tagged tracks',
+    )
+    catalog_parser.add_argument('--dir', '-d', required=True,
+                                help='Directory containing music files')
+    catalog_parser.add_argument('--db', required=True,
+                                help='Path to the SQLite catalog database')
+    catalog_parser.add_argument('--csv', required=True,
+                                help='Path to the CSV catalog export')
+    catalog_parser.add_argument('--prune', action='store_true',
+                                help='Remove catalog rows for tracks no longer found in --dir')
+
     args = parser.parse_args()
 
     try:
@@ -191,6 +220,9 @@ def main():
 
         elif args.command == 'standardize':
             standardize.run(args)
+
+        elif args.command == 'catalog':
+            catalog.run(args)
 
     except Exception as e:
         print(f"Error: {str(e)}", file=sys.stderr)

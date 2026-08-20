@@ -3,7 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - fpdf2
-  - mutagen=1.40.0
+  - mutagen=1.47.0
   - pandas
   - pillow
   - pypdf

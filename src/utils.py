@@ -10,11 +10,14 @@
 import argparse
 import os
 import logging
+import subprocess
+import tempfile
 from datetime import datetime
 import json
 import pandas as pd
 import mutagen
 import mutagen.flac
+from mutagen.flac import FLAC
 from tqdm import tqdm
 import csv
 
@@ -51,6 +54,116 @@ def setup_logging(path_to_run_data):
     )
 
     return logging.getLogger(__name__)
+
+def find_flac_files(search_dir):
+    """
+    Recursively find FLAC files under a directory, showing progress as they're found.
+
+    Args:
+        search_dir (str): Directory to search for FLAC files.
+
+    Returns:
+        list: Sorted paths of files ending in '.flac' (case-insensitive).
+    """
+    flac_files = []
+    with tqdm(desc="Finding FLAC files", unit="file") as pbar:
+        for dirpath, _, filenames in os.walk(search_dir):
+            for file in filenames:
+                if file.lower().endswith('.flac'):
+                    flac_files.append(os.path.join(dirpath, file))
+                    pbar.update(1)
+    return sorted(flac_files)
+
+MISSING_CHECKSUM_MD5 = '0' * 32
+
+def get_audio_md5(audio):
+    """
+    Get the FLAC STREAMINFO audio checksum as a hex string.
+
+    This is the MD5 of the decoded audio samples, computed by the encoder
+    and stored in the file. It is unaffected by tag edits or renames, and
+    only changes if the audio itself is re-encoded.
+
+    Args:
+        audio (mutagen.flac.FLAC): An open FLAC file.
+
+    Returns:
+        str: 32-character hex string.
+    """
+    return f"{audio.info.md5_signature:032x}"
+
+def is_missing_checksum(audio_md5):
+    """Check whether an audio checksum is the all-zero value some encoders leave behind instead of computing one."""
+    return audio_md5 == MISSING_CHECKSUM_MD5
+
+def repair_missing_checksum(path):
+    """
+    Compute the real audio checksum for a file whose STREAMINFO checksum was
+    never computed (left as all zeros), and write it back into the file's
+    own STREAMINFO block.
+
+    Decodes and re-encodes the file through sox into a throwaway temporary
+    file, purely so sox's encoder computes a correct MD5 of the decoded
+    audio. This has to be a real, seekable file rather than a pipe: the
+    encoder writes the STREAMINFO header before it knows the checksum, then
+    seeks back to patch it in once encoding finishes, which it cannot do on
+    a non-seekable stream (confirmed by testing: piping sox's FLAC output
+    to stdout leaves the checksum missing). Reads the computed checksum
+    back via mutagen, deletes the temp file, then patches only the
+    STREAMINFO md5_signature field of the original file and saves it. sox
+    is given no rate/bit-depth flags, so this is a lossless pass-through;
+    the original file's compressed audio bytes and tags are never touched
+    by sox, only by the mutagen write below.
+
+    Args:
+        path (str): Path to a FLAC file with a missing audio checksum.
+
+    Returns:
+        tuple: (new_md5, error)
+            new_md5 (str or None): 32-character hex checksum on success,
+                else None.
+            error (str or None): Reason repair failed, else None.
+    """
+    directory = os.path.dirname(path) or '.'
+    temp_fd, temp_path = tempfile.mkstemp(prefix='.flac-repair-', suffix='.tmp', dir=directory)
+    os.close(temp_fd)
+    os.remove(temp_path)  # reserve a unique name; sox needs to write a fresh file, not overwrite one
+
+    try:
+        command = ['sox', path, '-t', 'flac', temp_path]
+        try:
+            result = subprocess.run(command, capture_output=True)
+        except OSError as e:
+            return None, f"could not run sox: {e}"
+
+        stderr = result.stderr.decode('utf-8', errors='replace').strip()
+        if result.returncode != 0:
+            return None, stderr or f"sox exited with code {result.returncode}"
+        if not os.path.isfile(temp_path) or os.path.getsize(temp_path) == 0:
+            return None, stderr or "sox produced no output file"
+
+        try:
+            new_md5 = get_audio_md5(FLAC(temp_path))
+        except Exception as e:
+            return None, f"could not read checksum from re-encoded audio: {e}"
+
+        if is_missing_checksum(new_md5):
+            return None, "re-encoded audio also produced a missing (all-zero) checksum"
+
+        try:
+            original = FLAC(path)
+            original.info.md5_signature = int(new_md5, 16)
+            original.save()
+        except Exception as e:
+            return None, f"computed checksum but could not write it back to the file: {e}"
+
+        return new_md5, None
+    finally:
+        if os.path.isfile(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 def find_files_with_empty_tags(search_dir):
     empty_tag_files = []

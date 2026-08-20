@@ -18,26 +18,11 @@ import subprocess
 from mutagen.flac import FLAC
 from tqdm import tqdm
 
+from utils import find_flac_files
+
 ################################################################################
 ### Define functions
 ################################################################################
-
-def get_flac_files(search_dir):
-    """
-    Get a list of FLAC files in the specified directory.
-
-    Args:
-        search_dir (str): Directory to search for FLAC files.
-
-    Returns:
-        list: List of FLAC file paths.
-    """
-    flac_files = []
-    for dirpath, _, filenames in os.walk(search_dir):
-        for file in filenames:
-            if file.endswith('.flac'):
-                flac_files.append(os.path.join(dirpath, file))
-    return flac_files
 
 def read_file_list(file_list_path):
     """
@@ -147,7 +132,7 @@ def run(args):
     if args.file_list:
         files_to_convert = read_file_list(args.file_list)
     elif args.dir:
-        flac_files = get_flac_files(args.dir)
+        flac_files = find_flac_files(args.dir)
 
         files_to_convert = []
         failed_paths = []  # List to store files with errors
