@@ -8,8 +8,10 @@
 ################################################################################
 
 import argparse
+import logging
 import os
 import sys
+from datetime import datetime
 import pandas as pd
 import catalog
 import cleanup
@@ -17,6 +19,7 @@ import convert
 import read
 import standardize
 import structure
+import utils
 import write
 
 ################################################################################
@@ -108,31 +111,48 @@ def validate_inputs(args):
     else:
         raise ValueError("Invalid command.")
     
+def build_log_parent_parser():
+    """
+    Build a parent parser providing the --log-level and --log-file flags
+    shared by every subcommand.
+
+    Returns:
+        argparse.ArgumentParser: Parent parser to pass via parents=[...] to
+            each subcommand's parser.
+    """
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                        default='INFO', help='Logging verbosity shown on screen (default: INFO)')
+    parent.add_argument('--log-file', default=None,
+                        help='Path to the log file (default: logs/<command>_<timestamp>.log in the repo root)')
+    return parent
+
 def main():
     """Command-line utility for classical music file tagging and maintenance"""
 
+    log_parent = build_log_parent_parser()
     parser = argparse.ArgumentParser(description='Classical music file tagger')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
-    read_parser = subparsers.add_parser('read', help='Read tags from music files')
+    read_parser = subparsers.add_parser('read', help='Read tags from music files', parents=[log_parent])
     read_parser.add_argument('--dir', '-d', required=True,
                              help='Directory containing music files')
     read_parser.add_argument('--excel_out', '-o', required=True,
                              help='Excel file path for writing tag information')
 
-    write_parser = subparsers.add_parser('write', help='Write tags to music files')
+    write_parser = subparsers.add_parser('write', help='Write tags to music files', parents=[log_parent])
     write_parser.add_argument('--excel_in', '-i', required=True,
                               help='Excel file path for reading tag information')
     write_parser.add_argument('--excel_out', '-o', required=True,
                               help='Excel file path for writing failed tags')
 
-    cleanup_parser = subparsers.add_parser('cleanup', help='Clean up non-music files and normalize extensions')
+    cleanup_parser = subparsers.add_parser('cleanup', help='Clean up non-music files and normalize extensions', parents=[log_parent])
     cleanup_parser.add_argument('--dir', '-d', required=True,
                                 help='Directory containing music files')
     cleanup_parser.add_argument('--dry-run', action='store_true',
                                 help='Generate a report without making changes')
 
-    convert_parser = subparsers.add_parser('convert', help='Convert FLAC files to 16 bit 44 kHz')
+    convert_parser = subparsers.add_parser('convert', help='Convert FLAC files to 16 bit 44 kHz', parents=[log_parent])
     convert_parser.add_argument('--dir', '-d',
                                 help='Directory to scan for FLAC files')
     convert_parser.add_argument('--file-list',
@@ -142,7 +162,7 @@ def main():
     convert_parser.add_argument('--overwrite', action='store_true',
                                 help='Overwrite the original files after conversion')
 
-    structure_parser = subparsers.add_parser('structure', help='Organize album directories and Scans.pdf')
+    structure_parser = subparsers.add_parser('structure', help='Organize album directories and Scans.pdf', parents=[log_parent])
     structure_parser.add_argument('--dir', '-d', required=True,
                                   help='Directory containing music files')
     structure_parser.add_argument('--mode', required=True,
@@ -156,6 +176,7 @@ def main():
     standardize_parser = subparsers.add_parser(
         'standardize',
         help='Normalize disc/album folders and retag from mapping CSVs',
+        parents=[log_parent],
     )
     standardize_parser.add_argument('--dir', '-d',
                                     help='Directory containing music files')
@@ -176,6 +197,7 @@ def main():
     catalog_parser = subparsers.add_parser(
         'catalog',
         help='Build/update a database and CSV catalog of tagged tracks',
+        parents=[log_parent],
     )
     catalog_parser.add_argument('--dir', '-d', required=True,
                                 help='Directory containing music files')
@@ -188,6 +210,14 @@ def main():
 
     args = parser.parse_args()
 
+    log_file = args.log_file
+    if log_file is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(utils.get_repo_root(), 'logs', f'{args.command}_{timestamp}.log')
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    utils.setup_logging(args.log_level, log_file)
+    logger = logging.getLogger(__name__)
+
     try:
         # Validate inputs
         validate_inputs(args)
@@ -198,7 +228,7 @@ def main():
             tags_df = read.get_tags(tags_df)
             # Use XLSXwriter engine to allow for foreign-language characters
             tags_df.to_excel(args.excel_out, engine = 'xlsxwriter')
-            print(f"Tags saved to {args.excel_out}")
+            logger.info(f"Tags saved to {args.excel_out}")
 
         elif args.command == 'write':
             # Read tags from Excel and update files
@@ -207,7 +237,7 @@ def main():
             successful_df, failed_df = write.update_tags(tags_df)
             # Use XLSXwriter engine to allow for foreign-language characters
             failed_df.to_excel(args.excel_out, engine = 'xlsxwriter')
-            print(f"Failed tags saved to {args.excel_out}")
+            logger.info(f"Failed tags saved to {args.excel_out}")
 
         elif args.command == 'cleanup':
             cleanup.run(args)
@@ -225,7 +255,7 @@ def main():
             catalog.run(args)
 
     except Exception as e:
-        print(f"Error: {str(e)}", file=sys.stderr)
+        logger.error(f"Error: {str(e)}")
         sys.exit(1)
 
 if __name__ == '__main__':

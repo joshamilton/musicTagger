@@ -358,14 +358,29 @@ def test_planned_renames_only_needs_rename(tmp_path):
     assert planned[0]["new_name"] == "Disc 1"
 
 
+def test_apply_disc_renames_already_correct_reports_not_renamed(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    make_disc_with_flac(album, "Disc 1")
+    make_disc_with_flac(album, "Disc 2")
+
+    errors, renamed = apply_disc_renames_for_album(str(album))
+
+    assert errors == []
+    assert renamed is False
+    assert (album / "Disc 1").is_dir()
+    assert (album / "Disc 2").is_dir()
+
+
 def test_apply_duplicate_disc_numbers_error(tmp_path):
     album = tmp_path / "Album"
     album.mkdir()
     make_disc_with_flac(album, "Disk 03")
     make_disc_with_flac(album, "Disc 3")
 
-    errors = apply_disc_renames_for_album(str(album))
+    errors, renamed = apply_disc_renames_for_album(str(album))
     assert errors
+    assert renamed
     assert (album / "Disk 03").is_dir()
     assert (album / "Disc 3").is_dir()
 
@@ -376,8 +391,9 @@ def test_apply_padding_collision_with_existing(tmp_path):
     make_disc_with_flac(album, "Disc 1")
     make_disc_with_flac(album, "Disc 10")
 
-    errors = apply_disc_renames_for_album(str(album))
+    errors, renamed = apply_disc_renames_for_album(str(album))
     assert errors == []
+    assert renamed
     assert (album / "Disc 01").is_dir()
     assert (album / "Disc 10").is_dir()
     assert not (album / "Disc 1").exists()
@@ -390,8 +406,9 @@ def test_apply_two_phase_when_targets_overlap_sources(tmp_path):
     make_disc_with_flac(album, "Disc 2")
     make_disc_with_flac(album, "Disc 10")
 
-    errors = apply_disc_renames_for_album(str(album))
+    errors, renamed = apply_disc_renames_for_album(str(album))
     assert errors == []
+    assert renamed
     assert (album / "Disc 01").is_dir()
     assert (album / "Disc 02").is_dir()
     assert (album / "Disc 10").is_dir()

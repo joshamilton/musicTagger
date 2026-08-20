@@ -10,10 +10,10 @@
 import argparse
 import os
 import logging
+import sys
 import subprocess
 import tempfile
 import unicodedata
-from datetime import datetime
 import json
 import pandas as pd
 import mutagen
@@ -27,34 +27,60 @@ import csv
 ### Define functions
 ################################################################################
 
-def setup_logging(path_to_run_data):
-    """
-    Set up logging to a file.
+logger = logging.getLogger(__name__)
 
-    Args:
-        path_to_run_data (str): Path to the run data directory
+TRACK_MILESTONE_INTERVAL = 1000
+
+def get_repo_root():
+    """
+    Get the absolute path to the repository root (the parent of src/).
 
     Returns:
-        logging.Logger: Configured logger object
+        str: Absolute path to the repository root.
     """
-    # Create logs directory if it doesn't exist
-    log_dir = os.path.join(path_to_run_data, 'logs')
-    os.makedirs(log_dir, exist_ok=True)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Create log filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = os.path.join(log_dir, f'{timestamp}.log')
+def setup_logging(log_level='INFO', log_file=None):
+    """
+    Configure logging for the tagger CLI. Must be called exactly once, from
+    tagger.py's main(), after argparse has parsed --log-level/--log-file. The
+    caller is responsible for creating log_file's parent directory first.
 
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s: %(message)s',
-        handlers=[
-            logging.FileHandler(log_file)
-        ]
-    )
+    Every module then does logger = logging.getLogger(__name__) and logs
+    through that; this function is the only place logging gets configured.
 
-    return logging.getLogger(__name__)
+    A console handler is always attached, showing plain messages at
+    log_level (matching what the tool has always printed to the shell). A
+    file handler is attached whenever log_file is given, always capturing
+    everything from DEBUG up with a timestamped, detailed format -- so the
+    log file has the full record regardless of the requested log_level.
+
+    Args:
+        log_level (str): One of DEBUG, INFO, WARNING, ERROR, CRITICAL.
+            Controls the console handler only.
+        log_file (str or None): Path to the log file, or None to log to the
+            console only.
+
+    Returns:
+        None
+    """
+    handlers = []
+
+    console_handler = logging.StreamHandler(sys.stderr)
+    console_handler.setLevel(getattr(logging, log_level.upper()))
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    handlers.append(console_handler)
+
+    if log_file is not None:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+        ))
+        handlers.append(file_handler)
+
+    logging.basicConfig(level=logging.DEBUG, handlers=handlers, force=True)
 
 def find_flac_files(search_dir):
     """
@@ -73,7 +99,32 @@ def find_flac_files(search_dir):
                 if file.lower().endswith('.flac'):
                     flac_files.append(os.path.join(dirpath, file))
                     pbar.update(1)
+                    if len(flac_files) % TRACK_MILESTONE_INTERVAL == 0:
+                        logger.info(f"Found {len(flac_files)} FLAC files so far...")
     return sorted(flac_files)
+
+def walk_with_progress(search_dir, desc, unit="folder"):
+    """
+    Wrap os.walk with a live tqdm counter, so a long directory walk shows
+    visible progress instead of running silently.
+
+    Yields the same (dirpath, dirnames, filenames) tuples as os.walk,
+    including the same dirnames list instance os.walk uses internally, so
+    callers can still prune traversal by mutating it in place
+    (dirnames[:] = ...).
+
+    Args:
+        search_dir (str): Directory to walk.
+        desc (str): Progress bar label.
+        unit (str): Progress bar unit label.
+
+    Yields:
+        tuple: (dirpath, dirnames, filenames), exactly as os.walk yields.
+    """
+    with tqdm(desc=desc, unit=unit) as pbar:
+        for dirpath, dirnames, filenames in os.walk(search_dir):
+            pbar.update(1)
+            yield dirpath, dirnames, filenames
 
 def filenames_match(name_a, name_b):
     """

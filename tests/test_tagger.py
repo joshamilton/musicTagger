@@ -6,14 +6,47 @@
 ################################################################################
 ### Import packages
 ################################################################################
+import logging
 import pytest
 import os
 from argparse import Namespace
-from src.tagger import validate_inputs
+from src.tagger import main, validate_inputs
 
 ################################################################################
 ### Tests
 ################################################################################
+
+@pytest.fixture(autouse=True)
+def reset_root_logger():
+    """Restore the root logger's handlers/level after each test, since
+    main() configures logging as a side effect (like logging.basicConfig,
+    it mutates global state)."""
+    original_handlers = logging.root.handlers[:]
+    original_level = logging.root.level
+    yield
+    logging.root.handlers = original_handlers
+    logging.root.level = original_level
+
+def test_main_writes_log_file_at_explicit_log_file_path(tmp_path, monkeypatch):
+    """An end-to-end check that main() centralizes logging correctly: a
+    subcommand run with --log-file produces a non-empty log file at that
+    exact path (not the real repo's logs/ directory), containing the same
+    text the command prints to the console."""
+    music_dir = tmp_path / "music"
+    music_dir.mkdir()
+    log_file = tmp_path / "custom.log"
+
+    monkeypatch.setattr(
+        'sys.argv',
+        ['tagger.py', 'cleanup', '--dir', str(music_dir), '--log-file', str(log_file)],
+    )
+
+    main()
+
+    assert log_file.is_file()
+    content = log_file.read_text()
+    assert "Scanning directory for files to process..." in content
+    assert "Tag cleanup complete." in content
 
 @pytest.fixture
 # Create a temporary directory, input Excel file, and output Excel file path

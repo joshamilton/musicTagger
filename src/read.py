@@ -6,7 +6,6 @@
 ################################################################################
 ### Import packages
 ################################################################################
-import os
 import re
 import logging
 import mutagen
@@ -14,14 +13,9 @@ import mutagen.flac
 import pandas as pd
 from tqdm import tqdm  # For better progress tracking
 
-################################################################################
-### Setup logging
-################################################################################
+from utils import TRACK_MILESTONE_INTERVAL, find_flac_files, normalize_nfc
 
-# Import the setup_logging function
-from utils import setup_logging, find_flac_files, normalize_nfc
-# Initialize the logger
-logger = setup_logging(os.getcwd())
+logger = logging.getLogger(__name__)
 
 ################################################################################
 ### Define functions
@@ -190,7 +184,6 @@ def parse_fields_from_matching_album_string(match):
 
     # The match object should have two groups: year_recorded and album_string
     year_recorded, album_string = match.groups()
-    logging.info(f"{album_string}: Album info follows the convention. Attempting to extract from file path.")
     # Extract the album, orchestra and conductor
     try:
         album_string = album_string.split(' (')
@@ -220,7 +213,6 @@ def get_tags_from_file_with_unmatched_album_string(track_path):
         Any tag that cannot be read will return None for that field
     """
 
-    logging.info(f"{track_path}: Album info does not follow the convention. Attempting to extract from file tags.")
     # Extract album, year_recorded, orchestra, conductor
     audio_file = mutagen.flac.FLAC(track_path)
     # Album
@@ -454,8 +446,6 @@ def parse_fields_from_title_tag(track_path):
         Any tag that cannot be read will return None for that field
     """
 
-    logging.info(f"{track_path}: Track tag exists. Attempting to extract fields from title tag.")
-
     audio_file = mutagen.flac.FLAC(track_path)
     work = normalize_nfc(audio_file['title'][0])
 
@@ -489,8 +479,6 @@ def parse_fields_from_title_tag(track_path):
     return work, work_number, initial_key, catalog_number, opus, opus_number, epithet, movement
     
 def get_tags_from_file_without_title_tag(track_path):
-
-    logging.info(f"{track_path}: Track tag does not exist. Attempting to extract from file tags.")
 
     # Extract album, year_recorded, orchestra, conductor
     audio_file = mutagen.flac.FLAC(track_path)
@@ -623,9 +611,9 @@ def get_tags(tags_df):
     """
 
     total_files = len(tags_df)
-    print(f"Processing {total_files} files...")
+    logger.info(f"Processing {total_files} files...")
 
-    for track_path in tqdm(tags_df.index, total=total_files, desc="Reading tags"):
+    for index, track_path in enumerate(tqdm(tags_df.index, total=total_files, desc="Reading tags"), start=1):
 
         # Get album info from path structure
         album, year_recorded, orchestra, conductor = get_album_fields_from_track_path(track_path)
@@ -655,6 +643,9 @@ def get_tags(tags_df):
         genre, composer = get_genre_composer_tags_from_file(track_path)
         tags_df.loc[track_path, 'Genre'] = genre
         tags_df.loc[track_path, 'Composer'] = composer
+
+        if index % TRACK_MILESTONE_INTERVAL == 0:
+            logger.info(f"Processed {index} of {total_files} tracks...")
 
     return tags_df
 

@@ -12,6 +12,7 @@
 ### Import packages
 ################################################################################
 import csv
+import logging
 import os
 import sqlite3
 from datetime import datetime
@@ -20,7 +21,9 @@ from mutagen.flac import FLAC
 from tqdm import tqdm
 
 from standardize import get_tag
-from utils import find_flac_files, get_audio_md5, is_missing_checksum, repair_missing_checksum
+from utils import TRACK_MILESTONE_INTERVAL, find_flac_files, get_audio_md5, is_missing_checksum, repair_missing_checksum
+
+logger = logging.getLogger(__name__)
 
 ################################################################################
 ### Schema constants
@@ -106,15 +109,21 @@ def scan_tracks(track_paths):
     rows = []
     missing_checksum_count = 0
     skipped_unreadable = []
-    for path in tqdm(track_paths, desc="Cataloging tracks"):
+    for index, path in enumerate(tqdm(track_paths, desc="Cataloging tracks"), start=1):
+        # The milestone check lives in `finally` so it still runs even when
+        # an unreadable file takes the `continue` below.
         try:
-            row = build_track_row(path)
-        except Exception:
-            skipped_unreadable.append(path)
-            continue
-        if is_missing_checksum(row['audio_md5']):
-            missing_checksum_count += 1
-        rows.append(row)
+            try:
+                row = build_track_row(path)
+            except Exception:
+                skipped_unreadable.append(path)
+                continue
+            if is_missing_checksum(row['audio_md5']):
+                missing_checksum_count += 1
+            rows.append(row)
+        finally:
+            if index % TRACK_MILESTONE_INTERVAL == 0:
+                logger.info(f"Scanned {index} of {len(track_paths)} tracks...")
     return rows, missing_checksum_count, skipped_unreadable
 
 def repair_missing_checksum_tracks(rows):
@@ -140,7 +149,10 @@ def repair_missing_checksum_tracks(rows):
         return []
 
     report = []
-    for row in tqdm(missing_checksum_rows, desc="Repairing missing checksums"):
+    repaired_count = 0
+    failed_count = 0
+    total = len(missing_checksum_rows)
+    for index, row in enumerate(tqdm(missing_checksum_rows, desc="Repairing missing checksums"), start=1):
         new_md5, error = repair_missing_checksum(row['path'])
         if new_md5:
             row['audio_md5'] = new_md5
@@ -148,11 +160,15 @@ def repair_missing_checksum_tracks(rows):
                 'path': row['path'], 'status': 'repaired',
                 'new_audio_md5': new_md5, 'reason': '',
             })
+            repaired_count += 1
         else:
             report.append({
                 'path': row['path'], 'status': 'failed',
                 'new_audio_md5': '', 'reason': error,
             })
+            failed_count += 1
+        if index % TRACK_MILESTONE_INTERVAL == 0:
+            logger.info(f"Repaired {index} of {total} so far ({repaired_count} repaired, {failed_count} failed)...")
     return report
 
 def write_missing_checksum_report(report, csv_path):
@@ -282,16 +298,16 @@ def run(args):
     track_paths = find_flac_files(args.dir)
     if not track_paths:
         raise ValueError("No FLAC files found in the specified directory.")
-    print(f"Found {len(track_paths)} FLAC file(s).")
+    logger.info(f"Found {len(track_paths)} FLAC file(s).")
     rows, missing_checksum_count, skipped_unreadable = scan_tracks(track_paths)
 
     if missing_checksum_count:
-        print(f"{missing_checksum_count} file(s) are missing an audio checksum. Repairing them now...")
+        logger.info(f"{missing_checksum_count} file(s) are missing an audio checksum. Repairing them now...")
     missing_checksum_report = repair_missing_checksum_tracks(rows)
 
     duplicate_report = find_duplicate_tracks(rows)
 
-    print(f"Writing {len(rows)} track(s) to catalog...")
+    logger.info(f"Writing {len(rows)} track(s) to catalog...")
     conn = sqlite3.connect(args.db)
     create_tracks_table(conn)
     upsert_tracks(conn, rows, run_timestamp)
@@ -299,7 +315,7 @@ def run(args):
     dump_tracks_to_csv(conn, args.csv)
     total = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
     conn.close()
-    print("Catalog written.")
+    logger.info("Catalog written.")
 
     output_dir = os.path.dirname(args.csv) or '.'
 
@@ -315,32 +331,32 @@ def run(args):
     elif os.path.isfile(duplicate_report_path):
         os.remove(duplicate_report_path)  # clear a stale report from a previous run
 
-    print(f"Scanned {len(track_paths)} FLAC file(s); catalogued {len(rows)}.")
+    logger.info(f"Scanned {len(track_paths)} FLAC file(s); catalogued {len(rows)}.")
     if missing_checksum_report:
         repaired = sum(1 for r in missing_checksum_report if r['status'] == 'repaired')
         failed = sum(1 for r in missing_checksum_report if r['status'] == 'failed')
-        print(f"{len(missing_checksum_report)} file(s) were missing an audio checksum.")
+        logger.info(f"{len(missing_checksum_report)} file(s) were missing an audio checksum.")
         if repaired:
-            print(f"  {repaired} were repaired: the real checksum was written into the file and used in the catalog.")
+            logger.info(f"  {repaired} were repaired: the real checksum was written into the file and used in the catalog.")
         if failed:
-            print(
+            logger.warning(
                 f"  {failed} could not be repaired and are still catalogued under the shared "
                 "missing-checksum key, so they may share one row with each other."
             )
-        print(f"  Details for every file: {missing_checksum_report_path}")
+        logger.info(f"  Details for every file: {missing_checksum_report_path}")
     if duplicate_report:
         shadowed = sum(1 for r in duplicate_report if r['status'] == 'shadowed')
         groups = len({r['audio_md5'] for r in duplicate_report})
-        print(
+        logger.info(
             f"{shadowed} file(s) have identical audio to another file already in the catalog "
             f"({groups} group(s) of duplicates); only the most recently scanned file in each "
             "group is kept."
         )
-        print(f"  Details for every file: {duplicate_report_path}")
+        logger.info(f"  Details for every file: {duplicate_report_path}")
     if skipped_unreadable:
-        print(f"{len(skipped_unreadable)} file(s) could not be read and were skipped:")
+        logger.warning(f"{len(skipped_unreadable)} file(s) could not be read and were skipped:")
         for path in skipped_unreadable:
-            print(f"  {path}")
+            logger.warning(f"  {path}")
     if args.prune:
-        print(f"Pruned {pruned} stale row(s) not seen in this scan.")
-    print(f"Catalog now contains {total} track(s). Database: {args.db}  CSV: {args.csv}")
+        logger.info(f"Pruned {pruned} stale row(s) not seen in this scan.")
+    logger.info(f"Catalog now contains {total} track(s). Database: {args.db}  CSV: {args.csv}")

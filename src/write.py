@@ -7,6 +7,7 @@
 ################################################################################
 ### Import packages
 ################################################################################
+import logging
 import os
 import pandas as pd
 import re
@@ -16,6 +17,8 @@ import mutagen.easyid3
 from tqdm import tqdm  # For better progress tracking
 
 from utils import filenames_match, get_audio_md5, is_missing_checksum, normalize_nfc, repair_missing_checksum
+
+logger = logging.getLogger(__name__)
 
 ################################################################################
 ### Define functions
@@ -117,7 +120,7 @@ def update_tags(tags_df):
 
     # Iterator
     total_files = len(tags_df)
-    print(f"Updating {total_files} files...")
+    logger.info(f"Updating {total_files} files...")
 
     for file_path in tqdm(tags_df.index, total=total_files, desc="Writing tags"):
 
@@ -198,21 +201,21 @@ def update_tags(tags_df):
 
         except Exception as e:
             failed_paths.append(file_path)
-            print(e)
+            logger.error(f"{file_path}: {e}")
     
     # Create success/failure dataframes
     successful_df = tags_df.loc[successful_paths]
     failed_df = tags_df.loc[failed_paths]
 
-    print(f"Completed!")
-    print(f"Successfully processed: {len(successful_df)} files")
-    print(f"Failed: {len(failed_df)} files")
+    logger.info(f"Completed!")
+    logger.info(f"Successfully processed: {len(successful_df)} files")
+    logger.info(f"Failed: {len(failed_df)} files")
     if repaired_paths:
-        print(f"Repaired a missing audio checksum on {len(repaired_paths)} file(s) before tagging.")
+        logger.info(f"Repaired a missing audio checksum on {len(repaired_paths)} file(s) before tagging.")
     if still_missing_paths:
-        print(f"{len(still_missing_paths)} file(s) are still missing an audio checksum "
+        logger.warning(f"{len(still_missing_paths)} file(s) are still missing an audio checksum "
               f"(tags were still written; rerun catalog to retry repair):")
         for path, reason in still_missing_paths:
-            print(f"  {path}: {reason}")
+            logger.warning(f"  {path}: {reason}")
 
     return successful_df, failed_df

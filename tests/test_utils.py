@@ -7,11 +7,28 @@
 ### Import packages
 ################################################################################
 
+import logging
+import os
 import unicodedata
 
-from src.utils import filenames_match, get_audio_md5, is_missing_checksum, normalize_nfc, repair_missing_checksum
+import pytest
+
+from src.utils import (
+    filenames_match, get_audio_md5, get_repo_root, is_missing_checksum,
+    normalize_nfc, repair_missing_checksum, setup_logging, walk_with_progress,
+)
 
 from tests.conftest import FakeAudio, FakeCompletedProcess, make_flac_side_effect, mock_sox_failure, mock_sox_success
+
+@pytest.fixture(autouse=True)
+def reset_root_logger():
+    """Restore the root logger's handlers/level after each test, since
+    setup_logging (like logging.basicConfig) mutates global state."""
+    original_handlers = logging.root.handlers[:]
+    original_level = logging.root.level
+    yield
+    logging.root.handlers = original_handlers
+    logging.root.level = original_level
 
 ################################################################################
 ### get_audio_md5 / is_missing_checksum
@@ -130,3 +147,79 @@ def test_repair_missing_checksum_write_back_fails(tmp_path, mocker):
 
     assert new_md5 is None
     assert "could not write it back" in error
+
+################################################################################
+### get_repo_root
+################################################################################
+
+def test_get_repo_root_points_at_the_repository_root():
+    root = get_repo_root()
+    assert os.path.isfile(os.path.join(root, 'src', 'utils.py'))
+
+################################################################################
+### setup_logging
+################################################################################
+
+def test_setup_logging_console_only_when_no_log_file():
+    setup_logging('INFO', None)
+
+    assert len(logging.root.handlers) == 1
+    assert isinstance(logging.root.handlers[0], logging.StreamHandler)
+    assert logging.root.handlers[0].level == logging.INFO
+
+def test_setup_logging_adds_file_handler_always_at_debug(tmp_path):
+    log_file = tmp_path / "run.log"
+    setup_logging('WARNING', str(log_file))
+
+    console_handlers = [h for h in logging.root.handlers if isinstance(h, logging.StreamHandler)
+                         and not isinstance(h, logging.FileHandler)]
+    file_handlers = [h for h in logging.root.handlers if isinstance(h, logging.FileHandler)]
+
+    assert len(console_handlers) == 1
+    assert console_handlers[0].level == logging.WARNING
+    assert len(file_handlers) == 1
+    assert file_handlers[0].level == logging.DEBUG
+
+def test_setup_logging_file_captures_debug_regardless_of_console_level(tmp_path, capsys):
+    log_file = tmp_path / "run.log"
+    setup_logging('INFO', str(log_file))
+    logger = logging.getLogger('test_setup_logging_module')
+
+    logger.debug("only for the file")
+    logger.info("visible on console too")
+
+    console_output = capsys.readouterr().err
+    assert "visible on console too" in console_output
+    assert "only for the file" not in console_output
+
+    file_contents = log_file.read_text()
+    assert "only for the file" in file_contents
+    assert "visible on console too" in file_contents
+    assert "test_setup_logging_module" in file_contents  # detailed format includes the logger name
+
+################################################################################
+### walk_with_progress
+################################################################################
+
+def test_walk_with_progress_yields_same_tuples_as_os_walk(tmp_path):
+    (tmp_path / "album_a").mkdir()
+    (tmp_path / "album_a" / "track.flac").write_text("dummy")
+    (tmp_path / "album_b").mkdir()
+
+    expected = sorted(os.walk(str(tmp_path)))
+    actual = sorted(walk_with_progress(str(tmp_path), desc="Testing"))
+
+    assert actual == expected
+
+def test_walk_with_progress_dirnames_pruning_still_works(tmp_path):
+    (tmp_path / "keep").mkdir()
+    (tmp_path / "skip").mkdir()
+    (tmp_path / "skip" / "nested").mkdir()
+
+    visited = []
+    for dirpath, dirnames, _ in walk_with_progress(str(tmp_path), desc="Testing"):
+        visited.append(dirpath)
+        if os.path.basename(dirpath) == "skip":
+            dirnames[:] = []  # prune: do not descend into skip/nested
+
+    assert str(tmp_path / "skip" / "nested") not in visited

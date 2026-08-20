@@ -29,6 +29,7 @@ The tool was written to reflect my personal idiosyncrasies in tagging classical 
 - Organizes album directories (Scans.pdf, disc folders, cleanup)
 - Standardizes disc folder names to `Disc N` with shared zero-padding
 - Builds a database and CSV catalog of every tagged track, keyed on audio content so it survives renames
+- Writes a timestamped log file for every command, alongside the usual on-screen progress
 
 ## Prerequisites
 
@@ -83,6 +84,12 @@ All commands are invoked through `python src/tagger.py <command> ...`.
 python src/tagger.py --help
 python src/tagger.py <command> --help
 ```
+
+### Logging
+Every command writes a timestamped log file to `logs/` in the repository root by default, in addition to the on-screen progress shown below for each command. The log file always keeps full detail (including per-file/per-track detail not shown on screen), regardless of `--log-level`. Two flags are available on every command:
+
+- `--log-level` — Verbosity shown on screen (default: `INFO`). One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
+- `--log-file` — Path to the log file (default: `logs/<command>_<timestamp>.log` in the repository root).
 
 ### Reading Tags
 Read existing tags from a directory of FLAC files:

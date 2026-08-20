@@ -8,6 +8,7 @@
 ################################################################################
 
 import csv
+import logging
 import sqlite3
 import unicodedata
 from argparse import Namespace
@@ -349,7 +350,7 @@ def test_run_without_prune_leaves_stale_rows(tmp_path, mocker):
     assert rows[f"{1:032x}"] != first_seen[f"{1:032x}"]  # rescanned, timestamp advanced
 
 
-def test_run_missing_checksum_repair_fails_falls_back_to_shared_row(tmp_path, mocker, capsys):
+def test_run_missing_checksum_repair_fails_falls_back_to_shared_row(tmp_path, mocker, caplog):
     track = tmp_path / "01 - Track.flac"
     track.write_text("dummy")
     mocker.patch('src.catalog.FLAC', return_value=FakeAudio(dict(SAMPLE_TAGS), md5_signature=0))
@@ -371,12 +372,13 @@ def test_run_missing_checksum_repair_fails_falls_back_to_shared_row(tmp_path, mo
     assert report_rows[1][0] == str(track)
     assert report_rows[1][1] == 'failed'
 
-    out = capsys.readouterr().out.lower()
+    out = caplog.text.lower()
     assert "missing" in out
     assert "could not be repaired" in out
 
 
-def test_run_missing_checksum_repair_succeeds_gets_own_row(tmp_path, mocker, capsys):
+def test_run_missing_checksum_repair_succeeds_gets_own_row(tmp_path, mocker, caplog):
+    caplog.set_level(logging.INFO)
     track = tmp_path / "01 - Track.flac"
     track.write_text("dummy")
     db_path = tmp_path / "catalog.db"
@@ -401,7 +403,7 @@ def test_run_missing_checksum_repair_succeeds_gets_own_row(tmp_path, mocker, cap
     assert report_rows[1][1] == 'repaired'
     assert report_rows[1][2] == f"{555:032x}"
 
-    assert "repaired" in capsys.readouterr().out.lower()
+    assert "repaired" in caplog.text.lower()
 
 
 def test_run_two_missing_checksum_files_get_separate_rows_after_repair(tmp_path, mocker):
@@ -486,7 +488,7 @@ def test_run_duplicate_nonzero_hash_collapses_to_one_row_and_is_reported(tmp_pat
     assert statuses[str(track_b)] == 'kept'
 
 
-def test_run_unreadable_file_is_skipped_not_aborted(tmp_path, mocker, capsys):
+def test_run_unreadable_file_is_skipped_not_aborted(tmp_path, mocker, caplog):
     good = tmp_path / "01 - Good.flac"
     good.write_text("dummy")
     bad = tmp_path / "02 - Bad.flac"
@@ -509,7 +511,7 @@ def test_run_unreadable_file_is_skipped_not_aborted(tmp_path, mocker, capsys):
     rows = conn.execute("SELECT audio_md5 FROM tracks").fetchall()
     conn.close()
     assert rows == [(f"{1:032x}",)]
-    assert str(bad) in capsys.readouterr().out
+    assert str(bad) in caplog.text
 
 
 def test_run_mixed_normal_repaired_failed_and_unreadable(tmp_path, mocker):

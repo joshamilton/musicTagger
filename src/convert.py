@@ -13,12 +13,15 @@
 ################################################################################
 
 import csv
+import logging
 import os
 import subprocess
 from mutagen.flac import FLAC
 from tqdm import tqdm
 
-from utils import find_flac_files
+from utils import TRACK_MILESTONE_INTERVAL, find_flac_files
+
+logger = logging.getLogger(__name__)
 
 ################################################################################
 ### Define functions
@@ -44,7 +47,7 @@ def read_file_list(file_list_path):
                 sample_rate = int(row['sample_rate'])
                 files_to_convert.append((file_path, bit_depth, sample_rate))
     except Exception as e:
-        print(f"Error reading file list: {e}")
+        logger.error(f"Error reading file list: {e}")
     return files_to_convert
 
 def check_flac_metadata(file_path):
@@ -137,15 +140,18 @@ def run(args):
         files_to_convert = []
         failed_paths = []  # List to store files with errors
 
-        for file_path in flac_files:
+        for index, file_path in enumerate(tqdm(flac_files, desc="Checking FLAC metadata"), start=1):
             metadata = check_flac_metadata(file_path)
             if metadata is None:
                 failed_paths.append((file_path, None, None))
+                logger.warning(f"{file_path}: could not read FLAC metadata")
                 continue
             bit_depth, sample_rate = metadata
             if bit_depth != 16 or sample_rate != 44100:
                 files_to_convert.append((file_path, bit_depth, sample_rate))
                 total_size_to_convert += get_file_size(file_path)
+            if index % TRACK_MILESTONE_INTERVAL == 0:
+                logger.info(f"Checked {index} of {len(flac_files)} files' metadata...")
 
         # Write failed paths to a CSV file
         if failed_paths:
@@ -153,7 +159,7 @@ def run(args):
                 writer = csv.writer(csvfile)
                 for file_path in sorted(failed_paths):
                     writer.writerow([file_path])
-                print(f"Found {len(failed_paths)} files with errors. Corrupt or unreadable files logged to failure.csv.")
+                logger.warning(f"Found {len(failed_paths)} files with errors. Corrupt or unreadable files logged to failure.csv.")
 
     if args.dry_run:
         with open(os.path.join(output_dir, "convert.csv"), "w", newline='', encoding='utf-8-sig') as csvfile:
@@ -163,9 +169,9 @@ def run(args):
             for file, bit_depth, sample_rate in sorted(files_to_convert):
                 writer.writerow({'file_path': file, 'bit_depth': bit_depth, 'sample_rate': sample_rate})
 
-        print(f"Dry run complete. List of files saved to convert.csv.")
-        print(f"Files to convert: {len(files_to_convert)}")
-        print(f"Total size of files to convert: {total_size_to_convert / (1024 * 1024):.2f} MB")
+        logger.info(f"Dry run complete. List of files saved to convert.csv.")
+        logger.info(f"Files to convert: {len(files_to_convert)}")
+        logger.info(f"Total size of files to convert: {total_size_to_convert / (1024 * 1024):.2f} MB")
     else:
         errors = []
         warnings = []
@@ -201,9 +207,9 @@ def run(args):
                 writer.writeheader()
                 for file, error in errors:
                     writer.writerow({'file_path': file, 'error': error})
-            print(f"Conversion complete with errors. Errors logged to errors.csv.")
+            logger.warning(f"Conversion complete with errors. Errors logged to errors.csv.")
         else:
-            print(f"Conversion complete. All files processed successfully.")
+            logger.info(f"Conversion complete. All files processed successfully.")
 
         if warnings:
             with open(os.path.join(output_dir, "warnings.csv"), "w", newline='', encoding='utf-8-sig') as csvfile:
@@ -212,9 +218,9 @@ def run(args):
                 writer.writeheader()
                 for file, warning in warnings:
                     writer.writerow({'file_path': file, 'warning': warning})
-            print(f"{len(warnings)} file(s) emitted sox warnings (still converted). Logged to warnings.csv.")
+            logger.warning(f"{len(warnings)} file(s) emitted sox warnings (still converted). Logged to warnings.csv.")
 
-        print(f"Files successfully converted: {len(files_to_convert) - len(errors)}")
-        print(f"Files with errors: {len(errors)}")
-        print(f"Files with warnings: {len(warnings)}")
-        print(f"Total disk space saved: {total_space_saved / (1024 * 1024):.2f} MB")
+        logger.info(f"Files successfully converted: {len(files_to_convert) - len(errors)}")
+        logger.info(f"Files with errors: {len(errors)}")
+        logger.info(f"Files with warnings: {len(warnings)}")
+        logger.info(f"Total disk space saved: {total_space_saved / (1024 * 1024):.2f} MB")

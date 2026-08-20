@@ -11,6 +11,7 @@
 ################################################################################
 
 import csv
+import logging
 import os
 import re
 import uuid
@@ -19,7 +20,9 @@ from collections import Counter, defaultdict
 from mutagen.flac import FLAC
 from tqdm import tqdm
 
-from utils import filenames_match, find_flac_files, normalize_nfc
+from utils import TRACK_MILESTONE_INTERVAL, filenames_match, find_flac_files, normalize_nfc, walk_with_progress
+
+logger = logging.getLogger(__name__)
 
 ################################################################################
 ### Constants
@@ -145,14 +148,18 @@ def is_album_folder(directory):
     return has_flac_files(directory) or bool(find_disc_children(directory))
 
 
+ALBUM_MILESTONE_INTERVAL = 100
+
 def find_album_folders(root_dir):
     """
     Walk root_dir and return album folder paths (with or without disc children).
     """
     albums = []
-    for dirpath, dirnames, _ in os.walk(root_dir):
+    for dirpath, dirnames, _ in walk_with_progress(root_dir, desc="Finding albums", unit="folder"):
         if is_album_folder(dirpath):
             albums.append(dirpath)
+            if len(albums) % ALBUM_MILESTONE_INTERVAL == 0:
+                logger.info(f"Found {len(albums)} album folders so far...")
             dirnames[:] = [d for d in dirnames if parse_disc_number(d) is None]
     return sorted(albums)
 
@@ -321,7 +328,7 @@ def write_unique_tag_lists(uniques, output_file):
             writer.writerow([original_col, new_col])
             for value in sorted(values, key=lambda s: s.casefold()):
                 writer.writerow([value, ''])
-        print(f"Wrote {len(values)} unique {kind} to {path}")
+        logger.info(f"Wrote {len(values)} unique {kind} to {path}")
 
 
 # Tag kinds for retag mapping CSVs: (map_key, original_col, new_col, flac_keys_to_read..., write_key)
@@ -647,11 +654,27 @@ def build_plan_from_dir(root_dir):
     albums = find_album_folders(root_dir)
     rows = []
     uniques = empty_unique_tag_sets()
-    for album_path in tqdm(albums, desc="Analyzing albums", unit="album"):
+    planned_count = 0
+    skipped_count = 0
+    flagged_count = 0
+    for index, album_path in enumerate(tqdm(albums, desc="Analyzing albums", unit="album"), start=1):
         track_tags = collect_track_tags(album_path)
         add_track_tags_to_uniques(track_tags, uniques)
         rows.extend(disc_plan_rows(album_path))
-        rows.append(analyze_album(album_path, track_tags=track_tags))
+        album_row = analyze_album(album_path, track_tags=track_tags)
+        rows.append(album_row)
+        if album_row['status'] == 'planned':
+            planned_count += 1
+        elif album_row['status'] == 'skipped':
+            skipped_count += 1
+        else:
+            flagged_count += 1
+        if index % ALBUM_MILESTONE_INTERVAL == 0:
+            logger.info(
+                f"Analyzed {index} of {len(albums)} albums: "
+                f"{planned_count} would need renaming, {skipped_count} already correct, "
+                f"{flagged_count} flagged..."
+            )
     return rows, uniques
 
 
@@ -834,24 +857,32 @@ def apply_retag_mappings(root_dir, mappings):
 
     flac_paths = find_flac_files(root_dir)
     updated = 0
-    for path in tqdm(flac_paths, desc="Retagging files", unit="file"):
+    for index, path in enumerate(tqdm(flac_paths, desc="Retagging files", unit="file"), start=1):
+        # The milestone check lives in `finally` so it still runs on every
+        # iteration even though most take an early `continue` below (no
+        # update needed) -- a check placed after the continues would only
+        # ever see the rare "updated" case, not overall progress.
         try:
-            audio = FLAC(path)
-        except Exception as e:
-            errors.append(f"{path}: failed to open ({e})")
-            continue
-        updates = compute_retag_updates(audio, mappings)
-        if not updates:
-            continue
-        try:
-            for key, value in updates.items():
-                audio[key] = value
-            audio.save()
-            updated += 1
-            touched_albums.add(album_folder_for_file(path))
-        except Exception as e:
-            errors.append(f"{path}: failed to save ({e})")
-    print(f"Retagged {updated} of {len(flac_paths)} FLAC files.")
+            try:
+                audio = FLAC(path)
+            except Exception as e:
+                errors.append(f"{path}: failed to open ({e})")
+                continue
+            updates = compute_retag_updates(audio, mappings)
+            if not updates:
+                continue
+            try:
+                for key, value in updates.items():
+                    audio[key] = value
+                audio.save()
+                updated += 1
+                touched_albums.add(album_folder_for_file(path))
+            except Exception as e:
+                errors.append(f"{path}: failed to save ({e})")
+        finally:
+            if index % TRACK_MILESTONE_INTERVAL == 0:
+                logger.info(f"Retagged {index} of {len(flac_paths)} files so far ({updated} updated)...")
+    logger.info(f"Retagged {updated} of {len(flac_paths)} FLAC files.")
     return errors, touched_albums
 
 
@@ -866,25 +897,31 @@ def normalize_soloists_for_dir(root_dir):
     errors = []
     flac_paths = find_flac_files(root_dir)
     updated = 0
-    for path in tqdm(flac_paths, desc="Normalizing soloist order", unit="file"):
+    for index, path in enumerate(tqdm(flac_paths, desc="Normalizing soloist order", unit="file"), start=1):
+        # See apply_retag_mappings for why the milestone check lives in
+        # `finally`: most iterations take an early `continue` below.
         try:
-            audio = FLAC(path)
-        except Exception as e:
-            errors.append(f"{path}: failed to open ({e})")
-            continue
-        current = get_tag(audio, 'Soloists')
-        if not current:
-            continue
-        normalized = normalize_soloists_field(current)
-        if normalized == current:
-            continue
-        try:
-            audio['Soloists'] = normalized
-            audio.save()
-            updated += 1
-        except Exception as e:
-            errors.append(f"{path}: failed to save ({e})")
-    print(f"Normalized soloist order in {updated} of {len(flac_paths)} FLAC files.")
+            try:
+                audio = FLAC(path)
+            except Exception as e:
+                errors.append(f"{path}: failed to open ({e})")
+                continue
+            current = get_tag(audio, 'Soloists')
+            if not current:
+                continue
+            normalized = normalize_soloists_field(current)
+            if normalized == current:
+                continue
+            try:
+                audio['Soloists'] = normalized
+                audio.save()
+                updated += 1
+            except Exception as e:
+                errors.append(f"{path}: failed to save ({e})")
+        finally:
+            if index % TRACK_MILESTONE_INTERVAL == 0:
+                logger.info(f"Normalized {index} of {len(flac_paths)} files so far ({updated} updated)...")
+    logger.info(f"Normalized soloist order in {updated} of {len(flac_paths)} FLAC files.")
     return errors
 
 ################################################################################
@@ -973,14 +1010,27 @@ def apply_rename_rows(rows):
         by_parent[row['path']].append(row)
 
     total = len(disc_rows) + len(album_rows)
+    processed = 0
+    last_milestone = 0
     with tqdm(total=total, desc="Applying renames", unit="folder") as pbar:
         for parent, renames in sorted(by_parent.items()):
             errors.extend(_apply_renames_in_parent(parent, renames))
             pbar.update(len(renames))
+            # Disc renames are applied in variable-sized batches (one parent
+            # folder at a time), so check via floor division rather than
+            # modulo -- a batch can otherwise jump straight past a milestone.
+            processed += len(renames)
+            milestone = processed // ALBUM_MILESTONE_INTERVAL
+            if milestone > last_milestone:
+                last_milestone = milestone
+                logger.info(f"Applied {processed} of {total} renames so far ({len(errors)} errors)...")
 
         for row in album_rows:
             errors.extend(apply_album_rename(row))
             pbar.update(1)
+            processed += 1
+            if processed % ALBUM_MILESTONE_INTERVAL == 0:
+                logger.info(f"Applied {processed} of {total} renames so far ({len(errors)} errors)...")
 
     unknown = [r for r in rows if r['type'] not in ('disc', 'album')]
     for row in unknown:
@@ -990,26 +1040,60 @@ def apply_rename_rows(rows):
 
 
 def apply_disc_renames_for_album(album_path):
-    """Apply needed disc renames for a single album (live scan path)."""
+    """
+    Apply needed disc renames for a single album (live scan path).
+
+    Returns:
+        tuple: (errors, renamed) - error messages (empty on full success),
+            and whether this album had at least one disc folder renamed
+            (False if every disc folder was already named correctly).
+    """
     mappings = build_disc_mappings(album_path)
     to_rename = [m for m in mappings if m['needs_rename']]
     if not to_rename:
-        return []
-    return _apply_renames_in_parent(album_path, to_rename)
+        return [], False
+    return _apply_renames_in_parent(album_path, to_rename), True
 
 
 def apply_plan_live(root_dir):
     """One-pass: disc renames then album renames for each album under root_dir."""
     errors = []
-    # Snapshot album paths first so album renames don't disturb the walk.
+    # Snapshot album paths once: disc renames only touch subfolder names
+    # inside an album, never the album folder's own path, so this list
+    # stays valid for both passes below.
     albums = find_album_folders(root_dir)
-    for album_path in albums:
-        errors.extend(apply_disc_renames_for_album(album_path))
-    # Re-find albums after disc renames (paths to albums unchanged).
-    for album_path in find_album_folders(root_dir):
+    renamed_count = 0
+    already_correct_count = 0
+    for index, album_path in enumerate(tqdm(albums, desc="Renaming disc folders", unit="album"), start=1):
+        album_errors, renamed = apply_disc_renames_for_album(album_path)
+        errors.extend(album_errors)
+        if renamed:
+            renamed_count += 1
+        else:
+            already_correct_count += 1
+        if index % ALBUM_MILESTONE_INTERVAL == 0:
+            logger.info(
+                f"Checked {index} of {len(albums)} albums for disc renames: "
+                f"{renamed_count} needed renaming, {already_correct_count} already correct..."
+            )
+    planned_count = 0
+    skipped_count = 0
+    flagged_count = 0
+    for index, album_path in enumerate(tqdm(albums, desc="Analyzing albums", unit="album"), start=1):
         row = analyze_album(album_path)
         if row['status'] == 'planned':
+            planned_count += 1
             errors.extend(apply_album_rename(row))
+        elif row['status'] == 'skipped':
+            skipped_count += 1
+        else:
+            flagged_count += 1
+        if index % ALBUM_MILESTONE_INTERVAL == 0:
+            logger.info(
+                f"Checked {index} of {len(albums)} albums for album renames: "
+                f"{planned_count} needed renaming, {skipped_count} already correct, "
+                f"{flagged_count} flagged..."
+            )
     return errors
 
 
@@ -1017,12 +1101,38 @@ def apply_plan_live_for_albums(album_paths):
     """Disc then album renames, scoped to specific album folders (e.g. retag-touched albums)."""
     errors = []
     albums = sorted(album_paths)
-    for album_path in albums:
-        errors.extend(apply_disc_renames_for_album(album_path))
-    for album_path in albums:
+    renamed_count = 0
+    already_correct_count = 0
+    for index, album_path in enumerate(tqdm(albums, desc="Renaming disc folders", unit="album"), start=1):
+        album_errors, renamed = apply_disc_renames_for_album(album_path)
+        errors.extend(album_errors)
+        if renamed:
+            renamed_count += 1
+        else:
+            already_correct_count += 1
+        if index % ALBUM_MILESTONE_INTERVAL == 0:
+            logger.info(
+                f"Checked {index} of {len(albums)} albums for disc renames: "
+                f"{renamed_count} needed renaming, {already_correct_count} already correct..."
+            )
+    planned_count = 0
+    skipped_count = 0
+    flagged_count = 0
+    for index, album_path in enumerate(tqdm(albums, desc="Analyzing albums", unit="album"), start=1):
         row = analyze_album(album_path)
         if row['status'] == 'planned':
+            planned_count += 1
             errors.extend(apply_album_rename(row))
+        elif row['status'] == 'skipped':
+            skipped_count += 1
+        else:
+            flagged_count += 1
+        if index % ALBUM_MILESTONE_INTERVAL == 0:
+            logger.info(
+                f"Checked {index} of {len(albums)} albums for album renames: "
+                f"{planned_count} needed renaming, {skipped_count} already correct, "
+                f"{flagged_count} flagged..."
+            )
     return errors
 
 ################################################################################
@@ -1070,7 +1180,7 @@ def run(args):
                 raise ValueError("Retag --file-list requires --dir.")
             mappings = load_retag_mappings(file_list)
             if not mappings:
-                print("No retag mappings to apply (empty or unchanged new_* values).")
+                logger.info("No retag mappings to apply (empty or unchanged new_* values).")
                 return
             errors, touched_albums = apply_retag_mappings(args.dir, mappings)
             errors.extend(apply_plan_live_for_albums(touched_albums))
@@ -1082,5 +1192,5 @@ def run(args):
 
     if errors:
         for message in errors:
-            print(f"Error: {message}")
+            logger.error(f"Error: {message}")
         raise RuntimeError(f"{len(errors)} {label} error(s) occurred.")

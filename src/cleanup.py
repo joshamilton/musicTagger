@@ -13,6 +13,7 @@
 ### Import packages
 ################################################################################
 import csv
+import logging
 import os
 from collections import defaultdict
 
@@ -20,26 +21,31 @@ from mutagen.flac import FLAC
 from tqdm import tqdm
 
 from read import ALLOWED_TAGS
+from utils import find_flac_files, walk_with_progress
+
+logger = logging.getLogger(__name__)
 
 ################################################################################
 ### Define functions
 ################################################################################
 
 def get_files_to_process(directory):
-    print('Scanning directory for files to process...')
+    logger.info('Scanning directory for files to process...')
     files_to_rename = []
     files_to_delete = []
     valid_extensions = {'.flac', '.log', '.cue', '.pdf'}
     valid_files = {'README.txt', 'Setlist Info.txt'}
-    for root, _, files in os.walk(directory):
+    for root, _, files in walk_with_progress(directory, desc="Scanning directory", unit="folder"):
         for file in files:
             file_path = os.path.join(root, file)
             ext = os.path.splitext(file)[1]
             if (ext.lower() in valid_extensions) or (file in valid_files):
                 if ext != ext.lower():
                     files_to_rename.append(file_path)
+                    logger.debug(f"Rename candidate (uppercase extension): {file_path}")
             else:
                 files_to_delete.append(file_path)
+                logger.debug(f"Delete candidate (disallowed file): {file_path}")
     return files_to_rename, files_to_delete
 
 def rename_files(files):
@@ -93,15 +99,16 @@ def generate_report(files_to_rename, files_to_delete, busy_files_rename, busy_fi
             busy_file.write(f"{file}\n")
 
 def generate_missing_files_report(directory, output_dir):
-    print('Generating missing files report...')
+    logger.info('Generating missing files report...')
     report_data = []
-    for root, _, files in os.walk(directory):
+    for root, _, files in walk_with_progress(directory, desc="Checking for missing log/cue files", unit="folder"):
         has_flac = any(file.lower().endswith('.flac') for file in files)
         if has_flac:
             has_log = any(file.lower().endswith('.log') for file in files)
             has_cue = any(file.lower().endswith('.cue') for file in files)
             if not has_log or not has_cue:
                 report_data.append([root, 'Yes' if has_log else 'No', 'Yes' if has_cue else 'No'])
+                logger.debug(f"Missing log/cue: {root} (log={has_log}, cue={has_cue})")
 
     with open(os.path.join(output_dir, "missing.csv"), "w", newline='', encoding='utf-8-sig') as csvfile:
         csvwriter = csv.writer(csvfile)
@@ -110,16 +117,12 @@ def generate_missing_files_report(directory, output_dir):
 
 def find_disallowed_tags(directory):
     """Scan FLAC tags under directory; list every tag key not in ALLOWED_TAGS."""
-    print('Scanning FLAC tags for disallowed fields...')
+    logger.info('Scanning FLAC tags for disallowed fields...')
     allowed_lower = {name.lower() for name in ALLOWED_TAGS}
     actions = []
     errors = []
-    flac_paths = [
-        os.path.join(root, file)
-        for root, _, files in os.walk(directory)
-        for file in files if file.lower().endswith('.flac')
-    ]
-    for path in tqdm(sorted(flac_paths), desc="Scanning FLAC tags"):
+    flac_paths = find_flac_files(directory)
+    for path in tqdm(flac_paths, desc="Scanning FLAC tags"):
         try:
             audio = FLAC(path)
         except Exception as e:
@@ -183,23 +186,23 @@ def run(args):
 
     if args.dry_run:
         generate_report(files_to_rename, files_to_delete, [], [], args.dir)
-        print(f"Dry run complete. {len(files_to_rename)} files to be renamed and {len(files_to_delete)} files to be deleted.")
+        logger.info(f"Dry run complete. {len(files_to_rename)} files to be renamed and {len(files_to_delete)} files to be deleted.")
     else:
         busy_files_rename = rename_files(files_to_rename)
         busy_files_delete = delete_files(files_to_delete)
         generate_report(files_to_rename, files_to_delete, busy_files_rename, busy_files_delete, args.dir)
-        print(f"Operation complete. {len(files_to_rename)} files renamed, {len(files_to_delete)} files deleted, and {len(busy_files_rename) + len(busy_files_delete)} files could not be processed due to being busy.")
+        logger.info(f"Operation complete. {len(files_to_rename)} files renamed, {len(files_to_delete)} files deleted, and {len(busy_files_rename) + len(busy_files_delete)} files could not be processed due to being busy.")
 
     generate_missing_files_report(args.dir, args.dir)
-    print("Missing files report generated.")
+    logger.info("Missing files report generated.")
 
     tag_actions, tag_errors = find_disallowed_tags(args.dir)
     write_tag_report(tag_actions, args.dir)
     affected_files = len({action['path'] for action in tag_actions})
     if args.dry_run:
-        print(f"Dry run: {len(tag_actions)} disallowed tag(s) across {affected_files} file(s) would be removed.")
+        logger.info(f"Dry run: {len(tag_actions)} disallowed tag(s) across {affected_files} file(s) would be removed.")
     else:
         tag_errors.extend(apply_tag_actions(tag_actions))
-        print(f"Tag cleanup complete. {len(tag_actions)} disallowed tag(s) removed across {affected_files} file(s).")
+        logger.info(f"Tag cleanup complete. {len(tag_actions)} disallowed tag(s) removed across {affected_files} file(s).")
     for message in tag_errors:
-        print(f"Error: {message}")
+        logger.error(f"Error: {message}")

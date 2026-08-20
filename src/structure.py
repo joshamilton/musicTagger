@@ -23,6 +23,7 @@
 
 import csv
 import io
+import logging
 import math
 import os
 import re
@@ -32,7 +33,7 @@ from fpdf import FPDF # 2: create a PDF from images
 from pypdf import PdfReader, PdfWriter # 3: merge / inspect / rewrite PDFs
 from tqdm import tqdm
 
-from utils import setup_logging
+logger = logging.getLogger(__name__)
 
 ################################################################################
 ### Define functions for creating Scans.pdf
@@ -93,14 +94,13 @@ def sane_dpi(value):
     return v, False
 
 
-def create_image_pdf(image_files, temp_image_pdf, logger):
+def create_image_pdf(image_files, temp_image_pdf):
     """
     Create a temporary PDF from image files.
 
     Args:
         image_files (list): List of image file paths.
         temp_image_pdf (str): Path to the temporary PDF file.
-        logger (logging.Logger): Logger object.
 
     Returns:
         None
@@ -139,14 +139,13 @@ def create_image_pdf(image_files, temp_image_pdf, logger):
     pdf.output(temp_image_pdf)
 
 
-def merge_pdfs(pdf_files, output_path, logger):
+def merge_pdfs(pdf_files, output_path):
     """
     Merge all PDFs into a single file.
 
     Args:
         pdf_files (list): List of PDF file paths.
         output_path (str): Path to the output PDF file.
-        logger (logging.Logger): Logger object.
 
     Returns:
         None
@@ -162,28 +161,27 @@ def merge_pdfs(pdf_files, output_path, logger):
         writer.write(f)
 
 
-def delete_original_files(files, logger):
+def delete_original_files(files):
     """
     Delete original files.
 
     Args:
         files (list): List of file paths to delete.
-        logger (logging.Logger): Logger object.
 
     Returns:
         None
     """
     for file in files:
         if os.path.basename(file).lower() == "scans.pdf":
-            logger.info(f"Skipping deletion of {file}")
+            logger.debug(f"Skipping deletion of {file}")
             continue
         try:
             os.remove(file)
-            logger.info(f"Deleted: {file}")
+            logger.debug(f"Deleted: {file}")
         except Exception as e:
             logger.error(f"Error deleting file {file}: {e}")
 
-def create_scans(subdirectory_path, dry_run, writer, logger):
+def create_scans(subdirectory_path, dry_run, writer):
     valid_extensions = {'.jpg', '.jpeg', '.png', '.tiff', '.bmp', '.svg', '.pdf'}
     image_files, pdf_files = collect_files(subdirectory_path, valid_extensions)
 
@@ -194,22 +192,22 @@ def create_scans(subdirectory_path, dry_run, writer, logger):
     if dry_run:
         logger.info(f"Dry run: The following files would be included in Scans.pdf for {subdirectory_path}:")
         for file in image_files + pdf_files:
-            logger.info(f"  - {file}")
+            logger.debug(f"  - {file}")
             writer.writerow([subdirectory_path, file])
         return
 
     temp_image_pdf = os.path.join(subdirectory_path, "temp_images.pdf")
     if image_files:
-        create_image_pdf(image_files, temp_image_pdf, logger)
+        create_image_pdf(image_files, temp_image_pdf)
         pdf_files.insert(0, temp_image_pdf)
 
     output_path = os.path.join(subdirectory_path, "Scans.pdf")
-    merge_pdfs(pdf_files, output_path, logger)
+    merge_pdfs(pdf_files, output_path)
 
     if os.path.exists(temp_image_pdf):
         os.remove(temp_image_pdf)
 
-    delete_original_files(image_files + pdf_files, logger)
+    delete_original_files(image_files + pdf_files)
     logger.info(f"Scans.pdf created at: {output_path}")
 
 
@@ -295,7 +293,7 @@ def _build_replacement_page_pdf(image_bytes, fmt, width_px, height_px):
     return bytes(pdf.output())
 
 
-def fix_scans_pdf(pdf_path, dry_run, writer, logger):
+def fix_scans_pdf(pdf_path, dry_run, writer):
     """
     Detect (and optionally repair) a Scans.pdf with oversized pages.
 
@@ -308,7 +306,6 @@ def fix_scans_pdf(pdf_path, dry_run, writer, logger):
         pdf_path (str): Path to the Scans.pdf to inspect.
         dry_run (bool): If True, only report; do not modify files.
         writer (csv.writer): CSV writer for action records.
-        logger (logging.Logger): Logger object.
 
     Returns:
         None
@@ -326,7 +323,7 @@ def fix_scans_pdf(pdf_path, dry_run, writer, logger):
     if dry_run:
         logger.info(f"Dry run: {len(oversized)} oversized page(s) in {pdf_path}")
         for index, width_pt, height_pt in oversized:
-            logger.info(
+            logger.debug(
                 f"  - page {index + 1}: {width_pt:.0f} x {height_pt:.0f} pt"
             )
             writer.writerow([pdf_path, index + 1, f"{width_pt:.0f}", f"{height_pt:.0f}"])
@@ -349,7 +346,7 @@ def fix_scans_pdf(pdf_path, dry_run, writer, logger):
                     new_reader = PdfReader(io.BytesIO(new_pdf_bytes))
                     out_writer.add_page(new_reader.pages[0])
                     fixed += 1
-                    logger.info(
+                    logger.debug(
                         f"Rebuilt page {index + 1} of {pdf_path} at {width_px} x {height_px} pt"
                     )
                     continue
@@ -379,13 +376,12 @@ def fix_scans_pdf(pdf_path, dry_run, writer, logger):
 ### Define functions for renaming "Disc" folders
 ################################################################################
 
-def identify_and_map_disc_folders(directory, logger):
+def identify_and_map_disc_folders(directory):
     """
     Identify disc folders and map them to new names in the format 'Disc #'.
 
     Args:
         directory (str): Path to the directory containing potential disc folders.
-        logger (logging.Logger): Logger object.
 
     Returns:
         list: A list of tuples containing the original folder path and revised folder name.
@@ -447,18 +443,18 @@ def identify_and_map_disc_folders(directory, logger):
     return folder_mappings
 
 
-def rename_disc_folders(subdirectory_path, dry_run, writer, logger):
-    mappings = identify_and_map_disc_folders(subdirectory_path, logger)
+def rename_disc_folders(subdirectory_path, dry_run, writer):
+    mappings = identify_and_map_disc_folders(subdirectory_path)
 
     for original_path, new_name in mappings:
         if dry_run:
-            logger.info(f"Dry run: Would rename {original_path} to {new_name}")
+            logger.debug(f"Dry run: Would rename {original_path} to {new_name}")
             writer.writerow([original_path, new_name])
         else:
             new_path = os.path.join(os.path.dirname(original_path), new_name)
             try:
                 os.rename(original_path, new_path)
-                logger.info(f"Renamed: {original_path} -> {new_path}")
+                logger.debug(f"Renamed: {original_path} -> {new_path}")
                 writer.writerow([original_path, new_name])
             except Exception as e:
                 logger.error(f"Error renaming {original_path} to {new_path}: {e}")
@@ -468,7 +464,7 @@ def rename_disc_folders(subdirectory_path, dry_run, writer, logger):
 ### Define functions for removing miscellaneous files
 ################################################################################
 
-def cleanup_directory(subdirectory_path, dry_run, writer, logger):
+def cleanup_directory(subdirectory_path, dry_run, writer):
     """
     Removes miscellaneous files and empty directories within the given subdirectory.
 
@@ -476,7 +472,6 @@ def cleanup_directory(subdirectory_path, dry_run, writer, logger):
         subdirectory_path (str): Path to the subdirectory to clean up.
         dry_run (bool): If True, logs the actions without making changes.
         writer (csv.writer): CSV writer object for logging actions.
-        logger (logging.Logger): Logger object.
 
     Returns:
         None
@@ -490,12 +485,12 @@ def cleanup_directory(subdirectory_path, dry_run, writer, logger):
             file_path = os.path.join(root, file)
             if not any(file.lower().endswith(ext) for ext in files_to_keep):
                 if dry_run:
-                    logger.info(f"Dry run: Would delete {file_path}")
+                    logger.debug(f"Dry run: Would delete {file_path}")
                     writer.writerow([file_path])
                 else:
                     try:
                         os.remove(file_path)
-                        logger.info(f"Deleted: {file_path}")
+                        logger.debug(f"Deleted: {file_path}")
                         writer.writerow([file_path])
                     except Exception as e:
                         logger.error(f"Error deleting file {file_path}: {e}")
@@ -506,12 +501,12 @@ def cleanup_directory(subdirectory_path, dry_run, writer, logger):
             dir_path = os.path.join(root, dir_name)
             if not os.listdir(dir_path):  # Check if the directory is empty
                 if dry_run:
-                    logger.info(f"Dry run: Would remove empty directory {dir_path}")
+                    logger.debug(f"Dry run: Would remove empty directory {dir_path}")
                     writer.writerow([dir_path])
                 else:
                     try:
                         os.rmdir(dir_path)
-                        logger.info(f"Removed empty directory: {dir_path}")
+                        logger.debug(f"Removed empty directory: {dir_path}")
                         writer.writerow([dir_path])
                     except Exception as e:
                         logger.error(f"Error removing directory {dir_path}: {e}")
@@ -527,10 +522,6 @@ def run(args):
     Args:
         args (argparse.Namespace): Parsed arguments with dir, mode, dry_run, output_csv.
     """
-    # Set up logging in the root project directory
-    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    logger = setup_logging(root_dir)
-
     # Set default output CSV path if not provided
     output_csv = args.output_csv or os.path.join(args.dir, "output.csv")
 
@@ -546,7 +537,7 @@ def run(args):
             writer.writerow(["Mode: make_scans"])
             writer.writerow(["Directory", "Included Files"])
             for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for Scans.pdf"):
-                create_scans(subdirectory_path, args.dry_run, writer, logger)
+                create_scans(subdirectory_path, args.dry_run, writer)
             writer.writerow([])  # Add a blank line between modes
 
         if args.mode in ['fix_scans', 'all']:
@@ -555,21 +546,21 @@ def run(args):
             for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for fix_scans"):
                 pdf_path = os.path.join(subdirectory_path, "Scans.pdf")
                 if os.path.isfile(pdf_path):
-                    fix_scans_pdf(pdf_path, args.dry_run, writer, logger)
+                    fix_scans_pdf(pdf_path, args.dry_run, writer)
             writer.writerow([])  # Add a blank line between modes
 
         if args.mode in ['rename_dirs', 'all']:
             writer.writerow(["Mode: rename_dirs"])
             writer.writerow(["Original Folder Path", "Revised Folder Name"])
             for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for renaming"):
-                rename_disc_folders(subdirectory_path, args.dry_run, writer, logger)
+                rename_disc_folders(subdirectory_path, args.dry_run, writer)
             writer.writerow([])  # Add a blank line between modes
 
         if args.mode in ['cleanup', 'all']:
             writer.writerow(["Mode: cleanup"])
             writer.writerow(["Deleted Files"])
             for subdirectory_path in tqdm(subdirectories, desc="Processing subdirectories for cleanup"):
-                cleanup_directory(subdirectory_path, args.dry_run, writer, logger)
+                cleanup_directory(subdirectory_path, args.dry_run, writer)
             writer.writerow([])  # Add a blank line between modes
 
-    print(f"Processing complete. Output written to {output_csv}.")
+    logger.info(f"Processing complete. Output written to {output_csv}.")
