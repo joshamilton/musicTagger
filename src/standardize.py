@@ -19,7 +19,7 @@ from collections import Counter, defaultdict
 from mutagen.flac import FLAC
 from tqdm import tqdm
 
-from utils import find_flac_files
+from utils import filenames_match, find_flac_files, normalize_nfc
 
 ################################################################################
 ### Constants
@@ -232,7 +232,7 @@ def get_tag(audio, *keys):
             continue
         value = str(values[0]).strip()
         if value:
-            return value
+            return normalize_nfc(value)
     return None
 
 
@@ -608,7 +608,7 @@ def analyze_album(album_path, track_tags=None):
     )
     base['new_name'] = new_basename
 
-    if original_basename == new_basename:
+    if filenames_match(original_basename, new_basename):
         base['status'] = 'skipped'
         return base
 
@@ -901,6 +901,7 @@ def _apply_renames_in_parent(parent, renames):
         list: Error messages (empty on full success).
     """
     errors = []
+    renames = [r for r in renames if not filenames_match(r['original_name'], r['new_name'])]
     if not renames:
         return errors
 
@@ -948,6 +949,8 @@ def apply_album_rename(row):
     dest = row_dest(row)
     if not os.path.isdir(src):
         return [f"missing source: {src}"]
+    if filenames_match(row['original_name'], row['new_name']):
+        return []
     if os.path.exists(dest):
         return [f"destination already exists: {dest}"]
     try:

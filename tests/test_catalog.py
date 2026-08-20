@@ -9,6 +9,7 @@
 
 import csv
 import sqlite3
+import unicodedata
 from argparse import Namespace
 
 import pytest
@@ -83,6 +84,18 @@ def test_build_track_row_reads_canonical_tags(tmp_path, mocker):
     assert row['composer'] == 'Ludwig van Beethoven'
     assert row['work_number'] == 'No 5'
     assert row['catalog_number'] is None  # empty tag value
+
+def test_build_track_row_normalizes_tags_to_nfc(tmp_path, mocker):
+    track = tmp_path / "01 - Track.flac"
+    track.write_text("dummy")
+    sample_tags = dict(SAMPLE_TAGS)
+    sample_tags['Conductor'] = [unicodedata.normalize('NFD', "Karl Böhm")]
+    audio = FakeAudio(sample_tags, md5_signature=42)
+    mocker.patch('src.catalog.FLAC', return_value=audio)
+
+    row = build_track_row(str(track))
+
+    assert row['conductor'] == unicodedata.normalize('NFC', "Karl Böhm")
 
 def test_scan_tracks_skips_unreadable_and_counts_missing_checksum(tmp_path, mocker):
     good = tmp_path / "01 - Good.flac"

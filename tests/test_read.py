@@ -7,6 +7,7 @@
 ### Import packages
 ################################################################################
 import os
+import unicodedata
 import pandas as pd
 import pytest
 from src.read import (
@@ -176,6 +177,25 @@ def test_get_tags_from_file_with_unmatched_album_string(mocker):
     path = "/path/to/Genre/Composer/Album/01 - Track.flac"
     result = get_album_fields_from_track_path(path)
     assert result == ("Album", "2024", "Orchestra", "Conductor")
+
+def test_get_tags_from_file_with_unmatched_album_string_normalizes_to_nfc(mocker):
+    # The FLAC tag stores the conductor's name decomposed (NFD); the function
+    # must hand back the precomposed (NFC) form so downstream text
+    # comparisons treat it the same as tags written by write.py, which
+    # always normalizes to NFC.
+    nfd_conductor = unicodedata.normalize('NFD', "Karl Böhm")
+    mock_flac = mocker.MagicMock()
+    mock_flac.__getitem__.side_effect = lambda x: {
+        'album': ['Album'],
+        'year recorded': ['2024'],
+        'orchestra': ['Orchestra'],
+        'conductor': [nfd_conductor]
+    }[x]
+    mocker.patch('mutagen.flac.FLAC', return_value=mock_flac)
+
+    path = "/path/to/Genre/Composer/Album/01 - Track.flac"
+    result = get_album_fields_from_track_path(path)
+    assert result == ("Album", "2024", "Orchestra", unicodedata.normalize('NFC', "Karl Böhm"))
 
 # Integration test for get_album_fields_from_track_path
 # Only need to test one matched example because parse_performer_string has already been tested

@@ -9,6 +9,7 @@
 
 import csv
 import os
+import unicodedata
 from argparse import Namespace
 
 import pytest
@@ -18,6 +19,7 @@ from src.standardize import (
     add_track_tags_to_uniques,
     album_folder_for_file,
     analyze_album,
+    apply_album_rename,
     apply_disc_renames_for_album,
     apply_plan_live_for_albums,
     apply_rename_rows,
@@ -25,6 +27,7 @@ from src.standardize import (
     build_disc_mappings,
     build_performance_info,
     build_plan_from_dir,
+    collect_track_tags,
     compute_retag_updates,
     detect_file_list_kind,
     earliest_year,
@@ -260,6 +263,26 @@ def test_analyze_album_orchestra_with_conductor(tmp_path):
     assert row["performance_info"] == "English Concert with Trevor Pinnock"
 
 
+def test_analyze_album_skipped_when_names_differ_only_by_normalization(tmp_path):
+    # The on-disk folder name is stored decomposed (NFD); the tag-built name
+    # comes back precomposed (NFC), the way write.py normalizes tags. Same
+    # text, different encoding -- must not be treated as a needed rename.
+    canonical_name = "[1959] 46 Symphonies (Berlin Philharmonic with Karl Böhm)"
+    on_disk_name = unicodedata.normalize('NFD', canonical_name)
+    album = tmp_path / on_disk_name
+    album.mkdir()
+    row = analyze_album(
+        str(album),
+        track_tags=[tags(
+            year="1959",
+            album="46 Symphonies",
+            orchestra="Berlin Philharmonic",
+            conductor=unicodedata.normalize('NFC', "Karl Böhm"),
+        )],
+    )
+    assert row["status"] == "skipped"
+
+
 def test_analyze_album_flags_no_perf(tmp_path):
     album = tmp_path / "Album"
     album.mkdir()
@@ -376,6 +399,38 @@ def test_apply_two_phase_when_targets_overlap_sources(tmp_path):
     assert not (album / "Disc 2").exists()
 
 ################################################################################
+### album apply
+################################################################################
+
+def test_apply_album_rename_noop_when_names_differ_only_by_normalization(tmp_path):
+    # Same scenario as the analyze_album regression above, but at the apply
+    # layer: on APFS, os.path.exists() finds the source folder itself under
+    # its NFC spelling, which used to be misreported as "destination already
+    # exists." The rename must be treated as already satisfied instead.
+    canonical_name = "[1985] Bruggen Conducts Mozart (Frans Brüggen)"
+    on_disk_name = unicodedata.normalize('NFD', canonical_name)
+    nfc_name = unicodedata.normalize('NFC', canonical_name)
+    album = tmp_path / on_disk_name
+    album.mkdir()
+
+    row = {'path': str(tmp_path), 'original_name': on_disk_name, 'new_name': nfc_name}
+    errors = apply_album_rename(row)
+
+    assert errors == []
+    assert (tmp_path / on_disk_name).is_dir()
+
+
+def test_apply_album_rename_real_collision_still_errors(tmp_path):
+    album = tmp_path / "Old Name"
+    album.mkdir()
+    (tmp_path / "New Name").mkdir()
+
+    row = {'path': str(tmp_path), 'original_name': "Old Name", 'new_name': "New Name"}
+    errors = apply_album_rename(row)
+
+    assert errors == ["destination already exists: " + str(tmp_path / "New Name")]
+
+################################################################################
 ### Scoped live rename (retag-touched albums)
 ################################################################################
 
@@ -478,6 +533,25 @@ class FakeAudio:
 
     def save(self):
         pass
+
+
+################################################################################
+### Tag reads (get_tag / collect_track_tags)
+################################################################################
+
+def test_collect_track_tags_normalizes_to_nfc(tmp_path, mocker):
+    album = tmp_path / "Album"
+    album.mkdir()
+    track = album / "01 - Track.flac"
+    track.write_text("dummy")
+
+    nfd_conductor = unicodedata.normalize('NFD', "Karl Böhm")
+    audio = FakeAudio({'Conductor': [nfd_conductor]})
+    mocker.patch('src.standardize.FLAC', side_effect=lambda path: audio)
+
+    track_tags = collect_track_tags(str(album))
+
+    assert track_tags[0]['conductor'] == unicodedata.normalize('NFC', "Karl Böhm")
 
 
 def test_detect_file_list_kind_rename_and_retag(tmp_path):

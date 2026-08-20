@@ -10,13 +10,12 @@
 import os
 import pandas as pd
 import re
-import unicodedata
 import mutagen
 import mutagen.flac
 import mutagen.easyid3
 from tqdm import tqdm  # For better progress tracking
 
-from utils import get_audio_md5, is_missing_checksum, repair_missing_checksum
+from utils import filenames_match, get_audio_md5, is_missing_checksum, normalize_nfc, repair_missing_checksum
 
 ################################################################################
 ### Define functions
@@ -62,7 +61,7 @@ def build_title(work, work_number='', catalog_number='', opus='', opus_number=''
         title_parts.append(f" - {movement}")
 
     title = ''.join(title_parts)
-    return unicodedata.normalize('NFC', title)
+    return normalize_nfc(title)
 
 ### Build filename
 def build_safe_filename(track_number, title, extension='.flac', max_bytes=255):
@@ -93,26 +92,6 @@ def build_safe_filename(track_number, title, extension='.flac', max_bytes=255):
     if len(encoded_title) > budget:
         safe_title = encoded_title[:budget].decode('utf-8', errors='ignore')
     return f"{prefix}{safe_title}{extension}"
-
-### Compare filenames
-def filenames_match(name_a, name_b):
-    """
-    Compare two filenames as Unicode text, treating names that differ only by
-    normalization form (e.g. NFD vs NFC accented characters) as equal.
-
-    Some network shares always store accented filenames in decomposed (NFD)
-    form no matter what encoding a rename request uses, so a rename that
-    would only change normalization form can never actually take effect.
-    Callers should skip renaming when this returns True.
-
-    Args:
-        name_a (str): First filename to compare.
-        name_b (str): Second filename to compare.
-
-    Returns:
-        bool: True if the names are equal once both are normalized to NFC.
-    """
-    return unicodedata.normalize('NFC', name_a) == unicodedata.normalize('NFC', name_b)
 
 ### Update tags
 def update_tags(tags_df):
@@ -186,8 +165,7 @@ def update_tags(tags_df):
                 if pd.notna(value) and value != '':
                     # Normalize accented characters to a single consistent form
                     # (source tags mix precomposed and decomposed encodings)
-                    if isinstance(value, str):
-                        value = unicodedata.normalize('NFC', value)
+                    value = normalize_nfc(value)
                     audio_file[tag] = value
 
             # Create Title tag from its component fields

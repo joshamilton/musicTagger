@@ -12,6 +12,7 @@ import os
 import logging
 import subprocess
 import tempfile
+import unicodedata
 from datetime import datetime
 import json
 import pandas as pd
@@ -73,6 +74,31 @@ def find_flac_files(search_dir):
                     flac_files.append(os.path.join(dirpath, file))
                     pbar.update(1)
     return sorted(flac_files)
+
+def filenames_match(name_a, name_b):
+    """
+    Compare two filenames as Unicode text, treating names that differ only by
+    normalization form (e.g. NFD vs NFC accented characters) as equal.
+
+    Some network shares always store accented filenames in decomposed (NFD)
+    form no matter what encoding a rename request uses, so a rename that
+    would only change normalization form can never actually take effect.
+    Callers should skip renaming when this returns True.
+
+    Args:
+        name_a (str): First filename to compare.
+        name_b (str): Second filename to compare.
+
+    Returns:
+        bool: True if the names are equal once both are normalized to NFC.
+    """
+    return unicodedata.normalize('NFC', name_a) == unicodedata.normalize('NFC', name_b)
+
+def normalize_nfc(value):
+    """Normalize a string to NFC Unicode form; non-strings pass through unchanged."""
+    if isinstance(value, str):
+        return unicodedata.normalize('NFC', value)
+    return value
 
 MISSING_CHECKSUM_MD5 = '0' * 32
 

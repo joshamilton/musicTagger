@@ -7,7 +7,9 @@
 ### Import packages
 ################################################################################
 
-from src.utils import get_audio_md5, is_missing_checksum, repair_missing_checksum
+import unicodedata
+
+from src.utils import filenames_match, get_audio_md5, is_missing_checksum, normalize_nfc, repair_missing_checksum
 
 from tests.conftest import FakeAudio, FakeCompletedProcess, make_flac_side_effect, mock_sox_failure, mock_sox_success
 
@@ -23,6 +25,26 @@ def test_get_audio_md5_formats_as_32_char_hex():
 def test_is_missing_checksum():
     assert is_missing_checksum('0' * 32) is True
     assert is_missing_checksum('a' * 32) is False
+
+################################################################################
+### filenames_match / normalize_nfc
+################################################################################
+
+def test_filenames_match_nfc_vs_nfd():
+    nfc_name = unicodedata.normalize('NFC', "Böhm")
+    nfd_name = unicodedata.normalize('NFD', "Böhm")
+    assert nfc_name != nfd_name  # sanity check: genuinely different byte sequences
+    assert filenames_match(nfc_name, nfd_name) is True
+
+def test_filenames_match_different_names():
+    assert filenames_match("Böhm", "Karajan") is False
+
+def test_normalize_nfc_normalizes_string():
+    nfd_name = unicodedata.normalize('NFD', "Böhm")
+    assert normalize_nfc(nfd_name) == unicodedata.normalize('NFC', "Böhm")
+
+def test_normalize_nfc_passes_through_non_string():
+    assert normalize_nfc(None) is None
 
 ################################################################################
 ### repair_missing_checksum

@@ -19,7 +19,7 @@ from tqdm import tqdm  # For better progress tracking
 ################################################################################
 
 # Import the setup_logging function
-from utils import setup_logging, find_flac_files
+from utils import setup_logging, find_flac_files, normalize_nfc
 # Initialize the logger
 logger = setup_logging(os.getcwd())
 
@@ -225,22 +225,22 @@ def get_tags_from_file_with_unmatched_album_string(track_path):
     audio_file = mutagen.flac.FLAC(track_path)
     # Album
     try:
-        album = audio_file['album'][0]
+        album = normalize_nfc(audio_file['album'][0])
     except:
         album = None
     # Year recorded
     try:
-        year_recorded = audio_file['year recorded'][0]
+        year_recorded = normalize_nfc(audio_file['year recorded'][0])
     except:
         year_recorded = None
     # Orchestra
     try:
-        orchestra = audio_file['orchestra'][0]
+        orchestra = normalize_nfc(audio_file['orchestra'][0])
     except:
         orchestra = None
     # Conductor
     try:
-        conductor = audio_file['conductor'][0]
+        conductor = normalize_nfc(audio_file['conductor'][0])
     except:
         conductor = None
 
@@ -457,7 +457,7 @@ def parse_fields_from_title_tag(track_path):
     logging.info(f"{track_path}: Track tag exists. Attempting to extract fields from title tag.")
 
     audio_file = mutagen.flac.FLAC(track_path)
-    work = audio_file['title'][0]
+    work = normalize_nfc(audio_file['title'][0])
 
     # Attempt to parse the track string. The hand-tagged format of the 'title' tag is:
     
@@ -496,47 +496,47 @@ def get_tags_from_file_without_title_tag(track_path):
     audio_file = mutagen.flac.FLAC(track_path)
     # Track number
     try:
-        track_number = audio_file['tracknumber'][0]
+        track_number = normalize_nfc(audio_file['tracknumber'][0])
     except:
         track_number = None
     # Work
     try:
-        work = audio_file['title'][0]
+        work = normalize_nfc(audio_file['title'][0])
     except:
         work = None
     # Work number
     try:
-        work_number = audio_file['work number'][0]
+        work_number = normalize_nfc(audio_file['work number'][0])
     except:
         work_number = None
     # Initial key
     try:
-        initial_key = audio_file['initialkey'][0]
+        initial_key = normalize_nfc(audio_file['initialkey'][0])
     except:
         initial_key = None
     # Catalog number
     try:
-        catalog_number = audio_file['catalog #'][0]
+        catalog_number = normalize_nfc(audio_file['catalog #'][0])
     except:
         catalog_number = None
     # Opus
     try:
-        opus = audio_file['opus'][0]
+        opus = normalize_nfc(audio_file['opus'][0])
     except:
         opus = None
     # Opus number
     try:
-        opus_number = audio_file['opus number'][0]
+        opus_number = normalize_nfc(audio_file['opus number'][0])
     except:
         opus_number = None
     # Epithet
     try:
-        epithet = audio_file['epithet'][0]
+        epithet = normalize_nfc(audio_file['epithet'][0])
     except:
         epithet = None
     # Movement
     try:
-        movement = audio_file['movement'][0]
+        movement = normalize_nfc(audio_file['movement'][0])
     except:
         movement = None
 
@@ -567,7 +567,7 @@ def get_track_fields_from_track_path(track_path):
             opus_number, epithet, movement = get_tags_from_file_without_title_tag(track_path)
     # Finally, read the track number from the 'tracknumber' tag
     try:
-        track_number = audio_file['tracknumber'][0]
+        track_number = normalize_nfc(audio_file['tracknumber'][0])
     except:
         track_number = None
 
@@ -596,12 +596,12 @@ def get_genre_composer_tags_from_file(track_path):
     audio_file = mutagen.flac.FLAC(track_path)
     # Album
     try:
-        genre = audio_file['genre'][0]
+        genre = normalize_nfc(audio_file['genre'][0])
     except:
         genre = None
     # Year recorded
     try:
-        composer = audio_file['composer'][0]
+        composer = normalize_nfc(audio_file['composer'][0])
     except:
         composer = None
 
