@@ -35,14 +35,14 @@ The tool was written to reflect my personal idiosyncrasies in tagging classical 
 
 ### Clone the repository
 ```bash
-git clone git@github.com:joshamilton/musicTagger.git
-cd musicTagger
+git clone git@github.com:joshamilton/music-tagger.git
+cd music-tagger
 ```
 
 ### Setup the environment
 ```bash
-mamba env create -f musicTagger.yaml 
-mamba activate musicTagger
+mamba env create -f config/music-tagger.yml
+mamba activate music-tagger
 ```
 
 ## Tag Fields

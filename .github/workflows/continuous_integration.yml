@@ -17,7 +17,7 @@ jobs:
       - name: Setup micromamba and environment
         uses: mamba-org/setup-micromamba@v2
         with:
-          environment-file: musicTagger.yml
+          environment-file: config/music-tagger.yml
           init-shell: bash
           cache-environment: true
           post-cleanup: 'all'
