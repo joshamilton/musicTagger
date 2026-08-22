@@ -38,7 +38,7 @@ def validate_inputs(args):
     For structure: ensures that a valid directory path is given
     For standardize: ensures that either a valid directory or file list is given
     For catalog: ensures that a valid directory path is given, and that the
-        database and CSV output paths are valid
+        database output path is valid (the XLSX export path is derived from it)
 
     Args:
         args (argparse.Namespace): Parsed command-line arguments.
@@ -103,11 +103,6 @@ def validate_inputs(args):
         db_dir = os.path.dirname(args.db) or '.'
         if not os.path.isdir(db_dir):
             raise ValueError("Invalid or missing path for the catalog database.")
-        if not args.csv:
-            raise ValueError("Invalid or missing path for the catalog CSV export.")
-        csv_dir = os.path.dirname(args.csv) or '.'
-        if not os.path.isdir(csv_dir):
-            raise ValueError("Invalid or missing path for the catalog CSV export.")
     else:
         raise ValueError("Invalid command.")
     
@@ -202,9 +197,9 @@ def main():
     catalog_parser.add_argument('--dir', '-d', required=True,
                                 help='Directory containing music files')
     catalog_parser.add_argument('--db', required=True,
-                                help='Path to the SQLite catalog database')
-    catalog_parser.add_argument('--csv', required=True,
-                                help='Path to the CSV catalog export')
+                                help='Path to the SQLite catalog database; .db is appended if omitted '
+                                     '(catalog -> catalog.db), and the XLSX export is written alongside '
+                                     'it (catalog.xlsx)')
     catalog_parser.add_argument('--prune', action='store_true',
                                 help='Remove catalog rows for tracks no longer found in --dir')
 

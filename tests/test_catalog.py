@@ -13,20 +13,27 @@ import sqlite3
 import unicodedata
 from argparse import Namespace
 
+import pandas as pd
 import pytest
 
 from src.catalog import (
     CATALOG_FIELDS,
     DUPLICATE_REPORT_HEADER,
     MISSING_CHECKSUM_REPORT_HEADER,
+    UNIQUE_WORK_FIELDS,
     build_track_row,
+    build_unique_works_dataframe,
+    create_tracks_table,
     find_duplicate_tracks,
+    normalize_db_path,
     repair_missing_checksum_tracks,
     run,
     scan_tracks,
     to_snake_case,
+    upsert_tracks,
     write_duplicate_report,
     write_missing_checksum_report,
+    xlsx_path_for_db,
 )
 from src.utils import MISSING_CHECKSUM_MD5
 
@@ -67,6 +74,30 @@ from tests.conftest import (
 ])
 def test_to_snake_case(display_name, expected):
     assert to_snake_case(display_name) == expected
+
+################################################################################
+### normalize_db_path
+################################################################################
+
+@pytest.mark.parametrize('db_path, expected', [
+    ('/music/catalog', '/music/catalog.db'),
+    ('/music/catalog.db', '/music/catalog.db'),
+    ('/music/catalog.DB', '/music/catalog.DB'),
+])
+def test_normalize_db_path(db_path, expected):
+    assert normalize_db_path(db_path) == expected
+
+################################################################################
+### xlsx_path_for_db
+################################################################################
+
+@pytest.mark.parametrize('db_path, expected', [
+    ('/music/catalog.db', '/music/catalog.xlsx'),
+    ('/music/catalog.sqlite', '/music/catalog.xlsx'),
+    ('/music/catalog', '/music/catalog.xlsx'),
+])
+def test_xlsx_path_for_db(db_path, expected):
+    assert xlsx_path_for_db(db_path) == expected
 
 ################################################################################
 ### build_track_row / scan_tracks
@@ -227,6 +258,51 @@ def test_find_duplicate_tracks_excludes_missing_checksum_group():
     assert find_duplicate_tracks(rows) == []
 
 ################################################################################
+### build_unique_works_dataframe
+################################################################################
+
+def seed_tracks_db(tmp_path, mocker, tags_by_filename):
+    """Scan and upsert one track per (filename, tags) pair; return an open sqlite3.Connection."""
+    audios = {}
+    for index, (filename, tags) in enumerate(tags_by_filename.items(), start=1):
+        path = tmp_path / filename
+        path.write_text("dummy")
+        audios[str(path)] = FakeAudio(tags, md5_signature=index)
+    mocker.patch('src.catalog.FLAC', side_effect=lambda p: audios[p])
+    rows, _, _ = scan_tracks(list(audios.keys()))
+    conn = sqlite3.connect(':memory:')
+    create_tracks_table(conn)
+    upsert_tracks(conn, rows, '2026-01-01T00:00:00')
+    return conn
+
+def test_build_unique_works_dataframe_dedups_and_orders(tmp_path, mocker):
+    conn = seed_tracks_db(tmp_path, mocker, {
+        "01 - A.flac": {**SAMPLE_TAGS, 'Movement': ['I. Allegro']},
+        "02 - B.flac": {**SAMPLE_TAGS, 'Movement': ['II. Andante']},
+        "03 - C.flac": {**SAMPLE_TAGS, 'Movement': ['I. Allegro']},  # duplicate work tuple
+    })
+
+    df = build_unique_works_dataframe(conn)
+    conn.close()
+
+    assert list(df.columns) == UNIQUE_WORK_FIELDS
+    assert len(df) == 2  # the repeated tuple collapses to one row
+    assert list(df['Movement']) == ['I. Allegro', 'II. Andante']  # ordered ascending
+
+def test_build_unique_works_dataframe_includes_arranger(tmp_path, mocker):
+    conn = seed_tracks_db(tmp_path, mocker, {
+        "01 - A.flac": {**SAMPLE_TAGS, 'Arranger': ['Liszt']},
+        "02 - B.flac": dict(SAMPLE_TAGS),  # Arranger is blank in SAMPLE_TAGS
+    })
+
+    df = build_unique_works_dataframe(conn)
+    conn.close()
+
+    assert 'Arranger' in df.columns
+    assert len(df) == 2
+    assert 'Liszt' in list(df['Arranger'])
+
+################################################################################
 ### write_duplicate_report
 ################################################################################
 
@@ -251,44 +327,60 @@ def test_write_duplicate_report_writes_header_and_rows(tmp_path):
 ### run
 ################################################################################
 
-def test_run_happy_path_writes_db_and_csv(tmp_path, mocker):
+def test_run_happy_path_writes_db_and_xlsx(tmp_path, mocker):
     track = tmp_path / "01 - Track.flac"
     track.write_text("dummy")
     audio = FakeAudio(dict(SAMPLE_TAGS), md5_signature=1)
     mocker.patch('src.catalog.FLAC', return_value=audio)
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT audio_md5, path, composer, work_number FROM tracks").fetchall()
     conn.close()
     assert rows == [(f"{1:032x}", str(track), 'Ludwig van Beethoven', 'No 5')]
 
-    with open(csv_path, newline='', encoding='utf-8-sig') as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        data_rows = list(reader)
-    assert header == ['Audio MD5', 'Path', 'Last Seen'] + CATALOG_FIELDS
-    assert data_rows[0][0] == f"{1:032x}"
-    assert data_rows[0][1] == str(track)
-    assert data_rows[0][3] == 'Ludwig van Beethoven'  # first CATALOG_FIELDS column
+    # dtype=str avoids pandas' own read-time numeric coercion of digit-only
+    # cells (e.g. Audio MD5) -- the xlsx file itself stores them as text.
+    xlsx_path = tmp_path / "catalog.xlsx"
+    tracks_df = pd.read_excel(xlsx_path, sheet_name='Tracks', dtype=str)
+    assert list(tracks_df.columns) == ['Audio MD5', 'Path', 'Last Seen'] + CATALOG_FIELDS
+    assert tracks_df.iloc[0]['Audio MD5'] == f"{1:032x}"
+    assert tracks_df.iloc[0]['Path'] == str(track)
+    assert tracks_df.iloc[0]['Composer'] == 'Ludwig van Beethoven'
+
+    unique_works_df = pd.read_excel(xlsx_path, sheet_name='Unique Works', dtype=str)
+    assert list(unique_works_df.columns) == UNIQUE_WORK_FIELDS
+    assert len(unique_works_df) == 1
+    assert unique_works_df.iloc[0]['Composer'] == 'Ludwig van Beethoven'
+
+
+def test_run_appends_db_extension_when_omitted(tmp_path, mocker):
+    track = tmp_path / "01 - Track.flac"
+    track.write_text("dummy")
+    mocker.patch('src.catalog.FLAC', return_value=FakeAudio(dict(SAMPLE_TAGS), md5_signature=1))
+    bare_db_path = tmp_path / "brandenburg"
+
+    run(Namespace(dir=str(tmp_path), db=str(bare_db_path), prune=False))
+
+    assert (tmp_path / "brandenburg.db").exists()
+    assert (tmp_path / "brandenburg.xlsx").exists()
+    assert not bare_db_path.exists()
 
 
 def test_run_upserts_on_second_run(tmp_path, mocker):
     track = tmp_path / "01 - Track.flac"
     track.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     mocker.patch('src.catalog.FLAC', return_value=FakeAudio(
         {**SAMPLE_TAGS, 'Composer': ['Original Composer']}, md5_signature=7))
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     mocker.patch('src.catalog.FLAC', return_value=FakeAudio(
         {**SAMPLE_TAGS, 'Composer': ['Updated Composer']}, md5_signature=7))
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT composer FROM tracks").fetchall()
@@ -302,17 +394,16 @@ def test_run_prune_removes_stale_rows(tmp_path, mocker):
     track_b = tmp_path / "02 - B.flac"
     track_b.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     audios = {
         str(track_a): FakeAudio(dict(SAMPLE_TAGS), md5_signature=1),
         str(track_b): FakeAudio(dict(SAMPLE_TAGS), md5_signature=2),
     }
     mocker.patch('src.catalog.FLAC', side_effect=lambda path: audios[path])
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     track_b.unlink()
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=True))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=True))
 
     conn = sqlite3.connect(str(db_path))
     remaining = conn.execute("SELECT audio_md5 FROM tracks").fetchall()
@@ -326,21 +417,20 @@ def test_run_without_prune_leaves_stale_rows(tmp_path, mocker):
     track_b = tmp_path / "02 - B.flac"
     track_b.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     audios = {
         str(track_a): FakeAudio(dict(SAMPLE_TAGS), md5_signature=1),
         str(track_b): FakeAudio(dict(SAMPLE_TAGS), md5_signature=2),
     }
     mocker.patch('src.catalog.FLAC', side_effect=lambda path: audios[path])
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     first_seen = dict(conn.execute("SELECT audio_md5, last_seen FROM tracks").fetchall())
     conn.close()
 
     track_b.unlink()
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = dict(conn.execute("SELECT audio_md5, last_seen FROM tracks").fetchall())
@@ -356,9 +446,8 @@ def test_run_missing_checksum_repair_fails_falls_back_to_shared_row(tmp_path, mo
     mocker.patch('src.catalog.FLAC', return_value=FakeAudio(dict(SAMPLE_TAGS), md5_signature=0))
     mock_sox_failure(mocker)  # sox fails before repair ever calls FLAC again, so no utils.FLAC patch needed
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT audio_md5 FROM tracks").fetchall()
@@ -382,7 +471,6 @@ def test_run_missing_checksum_repair_succeeds_gets_own_row(tmp_path, mocker, cap
     track = tmp_path / "01 - Track.flac"
     track.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     audios = {str(track): FakeAudio(dict(SAMPLE_TAGS), md5_signature=0)}
     mock_sox_success(mocker)
@@ -390,7 +478,7 @@ def test_run_missing_checksum_repair_succeeds_gets_own_row(tmp_path, mocker, cap
     mocker.patch('src.catalog.FLAC', side_effect=fake_flac)  # build_track_row's own read
     mocker.patch('utils.FLAC', side_effect=fake_flac)        # repair_missing_checksum's reads
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT audio_md5 FROM tracks").fetchall()
@@ -412,7 +500,6 @@ def test_run_two_missing_checksum_files_get_separate_rows_after_repair(tmp_path,
     track_b = tmp_path / "02 - B.flac"
     track_b.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     audios = {
         str(track_a): FakeAudio(dict(SAMPLE_TAGS), md5_signature=0),
@@ -423,7 +510,7 @@ def test_run_two_missing_checksum_files_get_separate_rows_after_repair(tmp_path,
     mocker.patch('src.catalog.FLAC', side_effect=fake_flac)
     mocker.patch('utils.FLAC', side_effect=fake_flac)
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT audio_md5 FROM tracks ORDER BY audio_md5").fetchall()
@@ -437,7 +524,6 @@ def test_run_two_missing_checksum_files_both_fail_repair_still_collapse(tmp_path
     track_b = tmp_path / "02 - B.flac"
     track_b.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     audios = {
         str(track_a): FakeAudio(dict(SAMPLE_TAGS), md5_signature=0),
@@ -446,7 +532,7 @@ def test_run_two_missing_checksum_files_both_fail_repair_still_collapse(tmp_path
     mocker.patch('src.catalog.FLAC', side_effect=lambda path: audios[path])
     mock_sox_failure(mocker)  # sox fails before repair ever calls FLAC again, so no utils.FLAC patch needed
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT audio_md5 FROM tracks").fetchall()
@@ -464,7 +550,6 @@ def test_run_duplicate_nonzero_hash_collapses_to_one_row_and_is_reported(tmp_pat
     track_b = tmp_path / "02 - B.flac"
     track_b.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     audios = {
         str(track_a): FakeAudio(dict(SAMPLE_TAGS), md5_signature=99),
@@ -472,7 +557,7 @@ def test_run_duplicate_nonzero_hash_collapses_to_one_row_and_is_reported(tmp_pat
     }
     mocker.patch('src.catalog.FLAC', side_effect=lambda path: audios[path])
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT audio_md5 FROM tracks").fetchall()
@@ -494,7 +579,6 @@ def test_run_unreadable_file_is_skipped_not_aborted(tmp_path, mocker, caplog):
     bad = tmp_path / "02 - Bad.flac"
     bad.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     good_audio = FakeAudio(dict(SAMPLE_TAGS), md5_signature=1)
 
@@ -505,7 +589,7 @@ def test_run_unreadable_file_is_skipped_not_aborted(tmp_path, mocker, caplog):
 
     mocker.patch('src.catalog.FLAC', side_effect=fake_flac)
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT audio_md5 FROM tracks").fetchall()
@@ -524,7 +608,6 @@ def test_run_mixed_normal_repaired_failed_and_unreadable(tmp_path, mocker):
     unreadable = tmp_path / "04 - Unreadable.flac"
     unreadable.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
     audios = {
         str(normal): FakeAudio(dict(SAMPLE_TAGS), md5_signature=1),
@@ -556,7 +639,7 @@ def test_run_mixed_normal_repaired_failed_and_unreadable(tmp_path, mocker):
     mocker.patch('src.catalog.FLAC', side_effect=fake_flac)  # build_track_row's own reads
     mocker.patch('utils.FLAC', side_effect=fake_flac)        # repair_missing_checksum's reads
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute("SELECT audio_md5 FROM tracks").fetchall()
@@ -581,9 +664,8 @@ def test_run_no_missing_checksums_does_not_write_report(tmp_path, mocker):
     track.write_text("dummy")
     mocker.patch('src.catalog.FLAC', return_value=FakeAudio(dict(SAMPLE_TAGS), md5_signature=1))
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     assert not (tmp_path / "missing_checksums.csv").exists()
 
@@ -593,14 +675,13 @@ def test_run_no_duplicates_does_not_write_report(tmp_path, mocker):
     track.write_text("dummy")
     mocker.patch('src.catalog.FLAC', return_value=FakeAudio(dict(SAMPLE_TAGS), md5_signature=1))
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     assert not (tmp_path / "duplicates.csv").exists()
 
 
-def test_run_report_paths_next_to_csv_output(tmp_path, mocker):
+def test_run_report_paths_next_to_db_output(tmp_path, mocker):
     track = tmp_path / "01 - Track.flac"
     track.write_text("dummy")
     audios = {str(track): FakeAudio(dict(SAMPLE_TAGS), md5_signature=0)}
@@ -609,28 +690,27 @@ def test_run_report_paths_next_to_csv_output(tmp_path, mocker):
     mocker.patch('src.catalog.FLAC', side_effect=fake_flac)
     mocker.patch('utils.FLAC', side_effect=fake_flac)
 
-    db_path = tmp_path / "catalog.db"
     output_dir = tmp_path / "output"
     output_dir.mkdir()
-    csv_path = output_dir / "catalog.csv"
+    db_path = output_dir / "catalog.db"
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     assert (output_dir / "missing_checksums.csv").exists()
     assert not (tmp_path / "missing_checksums.csv").exists()
+    assert (output_dir / "catalog.xlsx").exists()
 
 
 def test_run_removes_stale_missing_checksum_report_when_none_remain(tmp_path, mocker):
     track = tmp_path / "01 - Track.flac"
     track.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
     report_path = tmp_path / "missing_checksums.csv"
     report_path.write_text("stale report from a previous run")
 
     mocker.patch('src.catalog.FLAC', return_value=FakeAudio(dict(SAMPLE_TAGS), md5_signature=1))
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     assert not report_path.exists()
 
@@ -639,12 +719,11 @@ def test_run_removes_stale_duplicate_report_when_none_remain(tmp_path, mocker):
     track = tmp_path / "01 - Track.flac"
     track.write_text("dummy")
     db_path = tmp_path / "catalog.db"
-    csv_path = tmp_path / "catalog.csv"
     report_path = tmp_path / "duplicates.csv"
     report_path.write_text("stale report from a previous run")
 
     mocker.patch('src.catalog.FLAC', return_value=FakeAudio(dict(SAMPLE_TAGS), md5_signature=1))
 
-    run(Namespace(dir=str(tmp_path), db=str(db_path), csv=str(csv_path), prune=False))
+    run(Namespace(dir=str(tmp_path), db=str(db_path), prune=False))
 
     assert not report_path.exists()

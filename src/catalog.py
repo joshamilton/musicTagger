@@ -5,7 +5,7 @@
 ### FLAC track in a music library, keyed on a hash of the track's audio
 ### stream (not its file path, which this codebase routinely renames). It
 ### reads canonical tags directly off already-tagged files and writes both a
-### SQLite database and a CSV export on every run.
+### SQLite database and an XLSX export on every run.
 ################################################################################
 
 ################################################################################
@@ -17,6 +17,7 @@ import os
 import sqlite3
 from datetime import datetime
 
+import pandas as pd
 from mutagen.flac import FLAC
 from tqdm import tqdm
 
@@ -35,6 +36,12 @@ CATALOG_FIELDS = [
     'Arranger', 'Genre', 'DiscNumber', 'TrackNumber', 'Title', 'TrackTitle',
     'Work', 'Work Number', 'InitialKey', 'Catalog #', 'Opus', 'Opus Number',
     'Epithet', 'Movement',
+]
+
+# Fields that identify a musical work, used to build the 'Unique Works' tab.
+UNIQUE_WORK_FIELDS = [
+    'Composer', 'Genre', 'Arranger', 'Work', 'Work Number', 'InitialKey',
+    'Catalog #', 'Opus', 'Opus Number', 'Epithet', 'Movement',
 ]
 
 MISSING_CHECKSUM_REPORT_FILENAME = 'missing_checksums.csv'
@@ -274,14 +281,33 @@ def prune_stale_tracks(conn, run_timestamp):
     conn.commit()
     return cursor.rowcount
 
-def dump_tracks_to_csv(conn, csv_path):
-    """Write the full contents of the tracks table to a CSV file, using display-style headers."""
+def normalize_db_path(db_path):
+    """Ensure a catalog database path ends in .db, appending it if the caller gave a bare filename."""
+    return db_path if db_path.lower().endswith('.db') else db_path + '.db'
+
+def xlsx_path_for_db(db_path):
+    """Derive the XLSX catalog export path that sits alongside a given database path."""
+    return os.path.splitext(db_path)[0] + '.xlsx'
+
+def build_tracks_dataframe(conn):
+    """Return the full contents of the tracks table as a DataFrame, using display-style headers."""
     header = ['Audio MD5', 'Path', 'Last Seen'] + CATALOG_FIELDS
     cursor = conn.execute(f"SELECT {', '.join(TRACK_COLUMNS)} FROM tracks ORDER BY path")
-    with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(header)
-        writer.writerows(cursor.fetchall())
+    return pd.DataFrame(cursor.fetchall(), columns=header)
+
+def build_unique_works_dataframe(conn):
+    """Return one row per unique combination of UNIQUE_WORK_FIELDS found in the tracks table."""
+    columns = [FIELD_COLUMN_MAP[name] for name in UNIQUE_WORK_FIELDS]
+    cursor = conn.execute(
+        f"SELECT DISTINCT {', '.join(columns)} FROM tracks ORDER BY {', '.join(columns)}"
+    )
+    return pd.DataFrame(cursor.fetchall(), columns=UNIQUE_WORK_FIELDS)
+
+def write_catalog_workbook(tracks_df, unique_works_df, xlsx_path):
+    """Write the tracks table and its unique work tuples to a two-tab XLSX workbook."""
+    with pd.ExcelWriter(xlsx_path, engine='xlsxwriter') as writer:
+        tracks_df.to_excel(writer, sheet_name='Tracks', index=False)
+        unique_works_df.to_excel(writer, sheet_name='Unique Works', index=False)
 
 ################################################################################
 ### Define run function
@@ -289,10 +315,11 @@ def dump_tracks_to_csv(conn, csv_path):
 
 def run(args):
     """
-    Scan a music directory and build/update a SQLite and CSV catalog of its tracks.
+    Scan a music directory and build/update a SQLite database and XLSX catalog of its tracks.
 
     Args:
-        args (argparse.Namespace): Parsed arguments with dir, db, csv, and prune.
+        args (argparse.Namespace): Parsed arguments with dir, db, and prune. The
+            XLSX export path is derived from db via xlsx_path_for_db.
     """
     run_timestamp = datetime.now().isoformat()
     track_paths = find_flac_files(args.dir)
@@ -308,16 +335,20 @@ def run(args):
     duplicate_report = find_duplicate_tracks(rows)
 
     logger.info(f"Writing {len(rows)} track(s) to catalog...")
-    conn = sqlite3.connect(args.db)
+    db_path = normalize_db_path(args.db)
+    xlsx_path = xlsx_path_for_db(db_path)
+    conn = sqlite3.connect(db_path)
     create_tracks_table(conn)
     upsert_tracks(conn, rows, run_timestamp)
     pruned = prune_stale_tracks(conn, run_timestamp) if args.prune else 0
-    dump_tracks_to_csv(conn, args.csv)
+    tracks_df = build_tracks_dataframe(conn)
+    unique_works_df = build_unique_works_dataframe(conn)
     total = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
     conn.close()
+    write_catalog_workbook(tracks_df, unique_works_df, xlsx_path)
     logger.info("Catalog written.")
 
-    output_dir = os.path.dirname(args.csv) or '.'
+    output_dir = os.path.dirname(db_path) or '.'
 
     missing_checksum_report_path = os.path.join(output_dir, MISSING_CHECKSUM_REPORT_FILENAME)
     if missing_checksum_report:
@@ -359,4 +390,4 @@ def run(args):
             logger.warning(f"  {path}")
     if args.prune:
         logger.info(f"Pruned {pruned} stale row(s) not seen in this scan.")
-    logger.info(f"Catalog now contains {total} track(s). Database: {args.db}  CSV: {args.csv}")
+    logger.info(f"Catalog now contains {total} track(s). Database: {db_path}  XLSX: {xlsx_path}")

@@ -28,7 +28,7 @@ The tool was written to reflect my personal idiosyncrasies in tagging classical 
 - Converts high-resolution FLAC files to 16-bit 44 kHz
 - Organizes album directories (Scans.pdf, disc folders, cleanup)
 - Standardizes disc folder names to `Disc N` with shared zero-padding
-- Builds a database and CSV catalog of every tagged track, keyed on audio content so it survives renames
+- Builds a database and XLSX catalog of every tagged track, keyed on audio content so it survives renames
 - Writes a timestamped log file for every command, alongside the usual on-screen progress
 
 ## Prerequisites
@@ -316,7 +316,6 @@ python src/tagger.py \
     catalog \
     --dir "path/to/music/library" \
     --db "catalog.db" \
-    --csv "catalog.csv" \
     [--prune]
 ```
 
@@ -324,12 +323,11 @@ This will:
 - Scan the directory recursively for FLAC files
 - Read the canonical Tag Fields (see above) directly from each file
 - Repair any file that's missing an audio checksum (still all-zero), and catalog it under its real checksum
-- Add or update one row per track in the SQLite database and the CSV export
+- Add or update one row per track in the SQLite database and the XLSX export
 
 Arguments:
 - `--dir`, `-d`: Directory containing music files (required)
-- `--db`: Path to the SQLite catalog database (required)
-- `--csv`: Path to the CSV catalog export (required)
+- `--db`: filename for the SQLite catalog database and XLSX export (required)
 - `--prune`: Remove rows for tracks no longer found in `--dir`
 
 #### Track identity
@@ -337,16 +335,18 @@ Each track is keyed on `audio_md5`, a checksum of the decoded audio samples that
 
 Because the key is derived from the audio itself, two different files can end up sharing one catalog row, for two different reasons:
 
-- **Missing checksums.** A small number of FLAC encoders never compute this checksum, leaving it as all zeros. `catalog` repairs these automatically: it decodes the file with `sox`, computes the real checksum, and writes it back into the file's own STREAMINFO block, so the repair is permanent and the file gets its own catalog row from then on. If a repair attempt fails (for example, `sox` isn't installed, or the file can't be decoded), the file falls back to the old behavior: it's still catalogued, but under the shared all-zero key, so it may share a row with other unrepaired files. Every file `catalog` finds missing a checksum, whether repaired or not, is listed in `missing_checksums.csv`, written next to the CSV catalog export. Each row has the file's path, whether it was repaired, the new checksum if it was, and the reason if it wasn't.
-- **Genuinely identical audio.** Two different files can have real, correctly-computed checksums that just happen to match — the same recording appearing on more than one release, for example. `catalog` can't repair this (there's nothing wrong with either file), so it reports it instead: every file involved in such a match is listed in `duplicates.csv`, written next to the CSV catalog export, with the file that ends up kept in the catalog marked `kept` and the rest marked `shadowed`. Deciding what to do about a genuine duplicate (keep both, remove one, merge tags) is left to you.
+- **Missing checksums.** A small number of FLAC encoders never compute this checksum, leaving it as all zeros. `catalog` repairs these automatically: it decodes the file with `sox`, computes the real checksum, and writes it back into the file's own STREAMINFO block, so the repair is permanent and the file gets its own catalog row from then on. If a repair attempt fails (for example, `sox` isn't installed, or the file can't be decoded), the file falls back to the old behavior: it's still catalogued, but under the shared all-zero key, so it may share a row with other unrepaired files. Every file `catalog` finds missing a checksum, whether repaired or not, is listed in `missing_checksums.csv`, written next to the XLSX catalog export. Each row has the file's path, whether it was repaired, the new checksum if it was, and the reason if it wasn't.
+- **Genuinely identical audio.** Two different files can have real, correctly-computed checksums that just happen to match — the same recording appearing on more than one release, for example. `catalog` can't repair this (there's nothing wrong with either file), so it reports it instead: every file involved in such a match is listed in `duplicates.csv`, written next to the XLSX catalog export, with the file that ends up kept in the catalog marked `kept` and the rest marked `shadowed`. Deciding what to do about a genuine duplicate (keep both, remove one, merge tags) is left to you.
 
 #### Staying in sync
 Because files can be deleted or moved outside this tool, `catalog` can't be told about a deletion directly — it notices one the next time it scans and a previously-catalogued track isn't there. Every track found in a scan gets its `last_seen` timestamp updated; run without `--prune`, a track missing from the current scan just stops getting a fresh `last_seen` (it stays in the catalog, visibly stale). Run with `--prune`, any row not touched by the current scan is deleted.
 
 #### Output files
-The SQLite database has one `tracks` table, with `audio_md5` as the primary key, a `path` column, a `last_seen` timestamp, and one column per canonical Tag Field, named in snake_case (`year_recorded`, `catalog_number`, and so on). The CSV export mirrors the same table but uses the actual tag names as headers (`Year Recorded`, `Catalog #`, and so on) instead of the snake_case column names.
+The SQLite database has one `tracks` table, with `audio_md5` as the primary key, a `path` column, a `last_seen` timestamp, and one column per canonical Tag Field, named in snake_case (`year_recorded`, `catalog_number`, and so on). The XLSX export has two tabs:
+- `Tracks` mirrors the full `tracks` table, using the actual tag names as headers (`Year Recorded`, `Catalog #`, and so on) instead of the snake_case column names.
+- `Unique Works` has one row per unique combination of the fields that identify a musical work (`Composer`, `Genre`, `Arranger`, `Work`, `Work Number`, `InitialKey`, `Catalog #`, `Opus`, `Opus Number`, `Epithet`, `Movement`), so each distinct work in the library appears once regardless of how many tracks or recordings it has.
 
-If any checksums were missing, `catalog` also writes `missing_checksums.csv` in the same directory as `--csv`; if any genuine audio duplicates were found, it writes `duplicates.csv` there too (see "Track identity" above for both).
+If any checksums were missing, `catalog` also writes `missing_checksums.csv` in the same directory as `--db`; if any genuine audio duplicates were found, it writes `duplicates.csv` there too (see "Track identity" above for both).
 
 ### Error Handling
 - Failed tag operations are logged to a separate Excel file

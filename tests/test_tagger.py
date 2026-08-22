@@ -132,7 +132,7 @@ def test_validate_inputs_catalog_mode_valid(setup_directories_and_files):
     valid_dir, _, output_excel = setup_directories_and_files
     output_dir = output_excel.parent
     args = Namespace(command='catalog', dir=str(valid_dir),
-                      db=str(output_dir / "catalog.db"), csv=str(output_dir / "catalog.csv"),
+                      db=str(output_dir / "catalog.db"),
                       prune=False)
     validate_inputs(args)
 
@@ -140,7 +140,7 @@ def test_validate_inputs_catalog_mode_invalid_dir(setup_directories_and_files):
     _, _, output_excel = setup_directories_and_files
     output_dir = output_excel.parent
     args = Namespace(command='catalog', dir='invalid_dir',
-                      db=str(output_dir / "catalog.db"), csv=str(output_dir / "catalog.csv"),
+                      db=str(output_dir / "catalog.db"),
                       prune=False)
     with pytest.raises(ValueError, match="Invalid or missing directory path containing music files."):
         validate_inputs(args)
@@ -149,7 +149,7 @@ def test_validate_inputs_catalog_mode_missing_dir(setup_directories_and_files):
     _, _, output_excel = setup_directories_and_files
     output_dir = output_excel.parent
     args = Namespace(command='catalog', dir=None,
-                      db=str(output_dir / "catalog.db"), csv=str(output_dir / "catalog.csv"),
+                      db=str(output_dir / "catalog.db"),
                       prune=False)
     with pytest.raises(ValueError, match="Invalid or missing directory path containing music files."):
         validate_inputs(args)
@@ -158,16 +158,7 @@ def test_validate_inputs_catalog_mode_invalid_db(setup_directories_and_files):
     valid_dir, _, output_excel = setup_directories_and_files
     output_dir = output_excel.parent
     args = Namespace(command='catalog', dir=str(valid_dir),
-                      db='invalid_path/catalog.db', csv=str(output_dir / "catalog.csv"),
+                      db='invalid_path/catalog.db',
                       prune=False)
     with pytest.raises(ValueError, match="Invalid or missing path for the catalog database."):
-        validate_inputs(args)
-
-def test_validate_inputs_catalog_mode_invalid_csv(setup_directories_and_files):
-    valid_dir, _, output_excel = setup_directories_and_files
-    output_dir = output_excel.parent
-    args = Namespace(command='catalog', dir=str(valid_dir),
-                      db=str(output_dir / "catalog.db"), csv='invalid_path/catalog.csv',
-                      prune=False)
-    with pytest.raises(ValueError, match="Invalid or missing path for the catalog CSV export."):
         validate_inputs(args)
