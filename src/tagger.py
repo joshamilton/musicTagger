@@ -17,6 +17,7 @@ import catalog
 import cleanup
 import convert
 import read
+import remove_flac
 import standardize
 import structure
 import utils
@@ -34,6 +35,7 @@ def validate_inputs(args):
     For write: ensures that the input Excel file path is valid
     For write: ensures that the output Excel file path is valid
     For cleanup: ensures that a valid directory path is given
+    For remove-flac: ensures that a valid directory path is given
     For convert: ensures that either a valid directory or file list is given
     For structure: ensures that a valid directory path is given
     For standardize: ensures that either a valid directory or file list is given
@@ -63,6 +65,9 @@ def validate_inputs(args):
         if not args.excel_out or not os.path.isdir(output_dir):
             raise ValueError("Invalid or missing file path for writing failed tags.")
     elif args.command == 'cleanup':
+        if not args.dir or not os.path.isdir(args.dir):
+            raise ValueError("Invalid or missing directory path containing music files.")
+    elif args.command == 'remove-flac':
         if not args.dir or not os.path.isdir(args.dir):
             raise ValueError("Invalid or missing directory path containing music files.")
     elif args.command == 'convert':
@@ -146,6 +151,10 @@ def main():
                                 help='Directory containing music files')
     cleanup_parser.add_argument('--dry-run', action='store_true',
                                 help='Generate a report without making changes')
+
+    remove_flac_parser = subparsers.add_parser('remove-flac', help='Delete FLAC, log, cue, and image/playlist files (post-conversion cleanup)', parents=[log_parent])
+    remove_flac_parser.add_argument('--dir', '-d', required=True,
+                                    help='Directory containing music files')
 
     convert_parser = subparsers.add_parser('convert', help='Convert FLAC files to 16 bit 44 kHz', parents=[log_parent])
     convert_parser.add_argument('--dir', '-d',
@@ -236,6 +245,9 @@ def main():
 
         elif args.command == 'cleanup':
             cleanup.run(args)
+
+        elif args.command == 'remove-flac':
+            remove_flac.run(args)
 
         elif args.command == 'convert':
             convert.run(args)

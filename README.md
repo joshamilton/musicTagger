@@ -25,6 +25,7 @@ The tool was written to reflect my personal idiosyncrasies in tagging classical 
 - Preserves unicode characters in tags
 - Tracks successful and failed tag operations
 - Cleans up non-music files and normalizes extensions
+- Removes FLAC, log, cue, and image/playlist files after converting an album to MP3
 - Converts high-resolution FLAC files to 16-bit 44 kHz
 - Organizes album directories (Scans.pdf, disc folders, cleanup)
 - Standardizes disc folder names to `Disc N` with shared zero-padding
@@ -145,6 +146,18 @@ python src/tagger.py \
 Arguments:
 - `--dir`, `-d`: Directory to scan for files (required)
 - `--dry-run`: Generate a report without making changes
+
+### Remove FLAC
+Delete FLAC, log, cue, accurip, playlist (`.m3u`/`.m3u8`), and image (`.jpg`/`.png`/`.tif`/`.bmp`) files recursively under a directory, matched case-insensitively. Run this after converting an album's FLAC files to MP3 by some other tool, to leave behind only the MP3s and anything else not in that list.
+
+```bash
+python src/tagger.py \
+    remove-flac \
+    --dir "path/to/music/files"
+```
+
+Arguments:
+- `--dir`, `-d`: Directory to scan for files (required)
 
 ### Convert
 Convert FLAC files that are not already 16-bit 44 kHz to 16-bit 44 kHz using SoX. Supports an overwrite option and dry-run reports.
