@@ -115,3 +115,18 @@ def test_run_live_removes_disallowed_tags(tmp_path, mocker):
     run(Namespace(dir=str(tmp_path), dry_run=False))
 
     assert audio.tags == {'Album': ['Keep']}
+
+
+def test_run_does_not_write_missing_files_report(tmp_path, mocker):
+    # The missing LOG/CUE report was removed: albums added from streaming
+    # sources have no LOG or CUE file, so the report was just noise.
+    track = tmp_path / "01 - Track.flac"
+    track.write_text("dummy")
+    audio = FakeAudio({'Album': ['Keep']})
+    mocker.patch('src.cleanup.FLAC', return_value=audio)
+
+    run(Namespace(dir=str(tmp_path), dry_run=True))
+    assert not (tmp_path / "missing.csv").exists()
+
+    run(Namespace(dir=str(tmp_path), dry_run=False))
+    assert not (tmp_path / "missing.csv").exists()

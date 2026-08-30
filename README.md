@@ -132,7 +132,7 @@ Arguments:
 - `--excel_out`, `-o`: Output Excel file for failed tags (required)
 
 ### Cleanup
-Find and remove files that are not FLAC, CUE, LOG, or PDF. Also renames files with uppercase extensions to lowercase, strips any FLAC tag not in the canonical Tag Fields list, and reports albums missing a LOG or CUE file.
+Find and remove files that are not FLAC, CUE, LOG, or PDF. Also renames files with uppercase extensions to lowercase, and strips any FLAC tag not in the canonical Tag Fields list.
 
 Tags removed are logged to `tags.csv` in `--dir`.
 
