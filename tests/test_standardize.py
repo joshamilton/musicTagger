@@ -16,11 +16,16 @@ import pytest
 
 from src.standardize import (
     CSV_FIELDNAMES,
+    _collect_and_normalize_album,
+    _rename_case_only,
+    _stage_disc_number,
+    _stage_soloists_normalization,
     add_track_tags_to_uniques,
     album_folder_for_file,
     analyze_album,
     apply_album_rename,
     apply_disc_renames_for_album,
+    apply_file_rename,
     apply_plan_live_for_albums,
     apply_rename_rows,
     apply_retag_mappings,
@@ -29,9 +34,12 @@ from src.standardize import (
     build_plan_from_dir,
     collect_track_tags,
     compute_retag_updates,
+    cue_log_plan_rows,
     detect_file_list_kind,
+    disc_pad_width,
     earliest_year,
     empty_unique_tag_sets,
+    find_cue_log_files,
     flip_to_last_first,
     format_conductor,
     format_soloists,
@@ -41,8 +49,10 @@ from src.standardize import (
     planned_renames_from_dir,
     read_rename_list,
     remap_soloists_field,
+    resolve_album_title,
     run,
     sanitize_component,
+    standardize_album,
     write_unique_tag_lists,
 )
 
@@ -447,6 +457,51 @@ def test_apply_album_rename_real_collision_still_errors(tmp_path):
 
     assert errors == ["destination already exists: " + str(tmp_path / "New Name")]
 
+
+def test_apply_album_rename_case_only_change(tmp_path):
+    # On a case-insensitive share the target name resolves back to the
+    # source folder itself, so os.path.exists(dest) is true. That used to
+    # be misreported as "destination already exists"; a case-only fix must
+    # go through instead.
+    on_disk = tmp_path / "in a time lapse"
+    on_disk.mkdir()
+
+    row = {'path': str(tmp_path), 'original_name': "in a time lapse",
+           'new_name': "In a Time Lapse"}
+    errors = apply_album_rename(row)
+
+    assert errors == []
+    assert [p.name for p in tmp_path.iterdir()] == ["In a Time Lapse"]
+
+
+def test_apply_file_rename_case_only_change(tmp_path):
+    album = tmp_path / "[2004] Una Mattina (Ludovico Einaudi)"
+    album.mkdir()
+    (album / "Una mattina.cue").write_text("x")
+
+    row = {'path': str(album), 'original_name': "Una mattina.cue",
+           'new_name': "Una Mattina.cue"}
+    errors = apply_file_rename(row)
+
+    assert errors == []
+    assert os.listdir(album) == ["Una Mattina.cue"]
+
+
+def test_rename_case_only_aborts_on_real_collision(tmp_path):
+    # _rename_case_only is only entered once the caller believes dest
+    # resolves to src. If that was wrong and dest is a separate file, the
+    # move-aside re-check must catch it and put src back.
+    src = tmp_path / "a.cue"
+    src.write_text("a")
+    dest = tmp_path / "b.cue"
+    dest.write_text("b")
+
+    errors = _rename_case_only(str(src), str(dest))
+
+    assert errors == ["destination already exists: " + str(dest)]
+    assert src.read_text() == "a"
+    assert dest.read_text() == "b"
+
 ################################################################################
 ### Scoped live rename (retag-touched albums)
 ################################################################################
@@ -467,12 +522,12 @@ def test_apply_plan_live_for_albums_scopes_to_given_albums(tmp_path, mocker):
         str(touched_track): FakeAudio({
             'Year Recorded': ['1960'],
             'Album': ['Organ Works'],
-            'Soloists': ['Alain, Marie-Claire'],
+            'Soloists': ['Marie-Claire Alain'],  # not yet 'Last, First'
         }),
         str(untouched_track): FakeAudio({
             'Year Recorded': ['1960'],
             'Album': ['Should Not Rename'],
-            'Soloists': ['Alain, Marie-Claire'],
+            'Soloists': ['Marie-Claire Alain'],
         }),
     }
     mocker.patch('src.standardize.FLAC', side_effect=lambda path: audios[path])
@@ -483,6 +538,10 @@ def test_apply_plan_live_for_albums_scopes_to_given_albums(tmp_path, mocker):
     assert not touched.exists()
     assert (touched.parent / "[1960] Organ Works (Marie-Claire Alain)").is_dir()
     assert untouched.is_dir()
+    # the scoped rescan normalizes Soloists order on the touched album...
+    assert audios[str(touched_track)].tags['Soloists'] == ['Alain, Marie-Claire']
+    # ...but never opens the untouched album
+    assert audios[str(untouched_track)].tags['Soloists'] == ['Marie-Claire Alain']
 
 ################################################################################
 ### Unique tag lists
@@ -764,6 +823,14 @@ def test_run_retag_renames_touched_album_only(tmp_path, mocker):
 ### run / CSV
 ################################################################################
 
+def test_run_rejects_output_file_without_dry_run(tmp_path):
+    root = tmp_path / "lib"
+    root.mkdir()
+    out = tmp_path / "report.csv"
+    with pytest.raises(ValueError, match="--output-file is only valid with --dry-run"):
+        run(Namespace(dir=str(root), dry_run=False, output_file=str(out), file_list=None))
+
+
 def test_run_dry_run_writes_schema(tmp_path):
     root = tmp_path / "lib"
     album = root / "Composer" / "Album"
@@ -902,3 +969,457 @@ def test_apply_rename_rows_disc_before_album(tmp_path):
     assert errors == []
     assert new_album.is_dir()
     assert (new_album / "Disc 1").is_dir()
+
+################################################################################
+### resolve_album_title
+################################################################################
+
+def test_resolve_album_title():
+    assert resolve_album_title([tags(album="A"), tags(album="A")]) == ("A", None)
+
+    title, reason = resolve_album_title([tags(album="A"), tags(album="B")])
+    assert title is None
+    assert "conflicting" in reason
+
+    title, reason = resolve_album_title([tags(), tags()])
+    assert title is None
+    assert reason == "missing Album"
+
+################################################################################
+### disc_pad_width / find_cue_log_files
+################################################################################
+
+def test_disc_pad_width(tmp_path):
+    single = tmp_path / "Single"
+    single.mkdir()
+    assert disc_pad_width(str(single)) == 1
+
+    small = tmp_path / "Small"
+    small.mkdir()
+    make_disc_with_flac(small, "Disc 1")
+    make_disc_with_flac(small, "Disc 2")
+    assert disc_pad_width(str(small)) == 1
+
+    big = tmp_path / "Big"
+    big.mkdir()
+    for n in range(1, 13):
+        make_disc_with_flac(big, f"Disc {n}")
+    assert disc_pad_width(str(big)) == 2
+
+
+def test_find_cue_log_files(tmp_path):
+    (tmp_path / "a.CUE").write_text("x")
+    (tmp_path / "b.cue").write_text("x")
+    (tmp_path / "note.log").write_text("x")
+    (tmp_path / "cover.jpg").write_text("x")
+    (tmp_path / "sub").mkdir()
+
+    cues, logs = find_cue_log_files(str(tmp_path))
+    assert cues == ["a.CUE", "b.cue"]
+    assert logs == ["note.log"]
+
+################################################################################
+### cue_log_plan_rows
+################################################################################
+
+def test_cue_log_plan_rows_single_disc(tmp_path):
+    album = tmp_path / "[1996] French String Quartets (Auryn Quartet)"
+    album.mkdir()
+    (album / "01 - Track.flac").write_text("dummy")
+    (album / "CDImage.cue").write_text("x")
+    (album / "Logfile.log").write_text("x")
+
+    rows = cue_log_plan_rows(str(album), track_tags=[tags(album="French String Quartets")])
+    by_orig = {r["original_name"]: r for r in rows}
+
+    assert by_orig["CDImage.cue"]["new_name"] == "French String Quartets.cue"
+    assert by_orig["CDImage.cue"]["status"] == "planned"
+    assert by_orig["CDImage.cue"]["type"] == "file"
+    assert by_orig["CDImage.cue"]["path"] == str(album)
+    assert by_orig["Logfile.log"]["new_name"] == "French String Quartets.log"
+
+
+def test_cue_log_plan_rows_skips_already_correct(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    (album / "French String Quartets.cue").write_text("x")
+
+    rows = cue_log_plan_rows(str(album), track_tags=[tags(album="French String Quartets")])
+    assert len(rows) == 1
+    assert rows[0]["status"] == "skipped"
+
+
+def test_cue_log_plan_rows_multi_disc_padding(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    d1 = make_disc_with_flac(album, "Disc 1")
+    d2 = make_disc_with_flac(album, "Disc 2")
+    (d1 / "CDImage.cue").write_text("x")
+    (d2 / "CDImage.cue").write_text("x")
+
+    rows = cue_log_plan_rows(str(album), track_tags=[tags(album="Symphonies")])
+    by_path = {r["path"]: r for r in rows}
+    assert by_path[str(d1)]["new_name"] == "Symphonies - Disc 1.cue"
+    assert by_path[str(d2)]["new_name"] == "Symphonies - Disc 2.cue"
+
+
+def test_cue_log_plan_rows_multi_disc_wide_padding(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    for n in range(1, 13):
+        disc = make_disc_with_flac(album, f"Disc {n}")
+        (disc / "CDImage.cue").write_text("x")
+
+    rows = cue_log_plan_rows(str(album), track_tags=[tags(album="Box")])
+    names = {r["new_name"] for r in rows}
+    assert "Box - Disc 01.cue" in names
+    assert "Box - Disc 12.cue" in names
+
+
+def test_cue_log_plan_rows_flags_multiple_cue(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    (album / "FLAC - Image.cue").write_text("x")
+    (album / "WAV - Image.cue").write_text("x")
+    (album / "ripper.log").write_text("x")
+
+    rows = cue_log_plan_rows(str(album), track_tags=[tags(album="A")])
+    cue_rows = [r for r in rows if r["original_name"].endswith(".cue")]
+    log_rows = [r for r in rows if r["original_name"].endswith(".log")]
+
+    assert len(cue_rows) == 2
+    assert all(r["status"] == "flagged" for r in cue_rows)
+    assert all("multiple .cue" in r["flag_reason"] for r in cue_rows)
+    # the lone .log is unaffected by the multi-.cue flag
+    assert log_rows[0]["status"] == "planned"
+    assert log_rows[0]["new_name"] == "A.log"
+
+
+def test_cue_log_plan_rows_flags_unresolved_album(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    (album / "CDImage.cue").write_text("x")
+    (album / "Logfile.log").write_text("x")
+
+    rows = cue_log_plan_rows(str(album), track_tags=[tags(album="A"), tags(album="B")])
+    assert len(rows) == 2
+    assert all(r["status"] == "flagged" for r in rows)
+    assert all("conflicting" in r["flag_reason"] for r in rows)
+
+################################################################################
+### apply_file_rename
+################################################################################
+
+def test_apply_file_rename_renames(tmp_path):
+    (tmp_path / "old.cue").write_text("x")
+    row = {'path': str(tmp_path), 'original_name': 'old.cue', 'new_name': 'new.cue'}
+
+    assert apply_file_rename(row) == []
+    assert (tmp_path / "new.cue").is_file()
+    assert not (tmp_path / "old.cue").exists()
+
+
+def test_apply_file_rename_noop_on_nfc_only_difference(tmp_path):
+    canonical = "Fauré.cue"
+    on_disk = unicodedata.normalize('NFD', canonical)
+    (tmp_path / on_disk).write_text("x")
+
+    row = {
+        'path': str(tmp_path),
+        'original_name': on_disk,
+        'new_name': unicodedata.normalize('NFC', canonical),
+    }
+    assert apply_file_rename(row) == []
+    assert (tmp_path / on_disk).is_file()
+
+
+def test_apply_file_rename_errors_on_real_collision(tmp_path):
+    (tmp_path / "old.cue").write_text("x")
+    (tmp_path / "new.cue").write_text("y")
+    row = {'path': str(tmp_path), 'original_name': 'old.cue', 'new_name': 'new.cue'}
+
+    errors = apply_file_rename(row)
+    assert errors == ["destination already exists: " + str(tmp_path / "new.cue")]
+
+
+def test_apply_rename_rows_file_before_disc(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    disc = make_disc_with_flac(album, "CD 1")
+    (disc / "CDImage.cue").write_text("x")
+
+    errors = apply_rename_rows([
+        {
+            'path': str(disc),
+            'original_name': 'CDImage.cue',
+            'new_name': 'Symphonies - Disc 1.cue',
+            'type': 'file',
+        },
+        {
+            'path': str(album),
+            'original_name': 'CD 1',
+            'new_name': 'Disc 1',
+            'type': 'disc',
+        },
+    ])
+    assert errors == []
+    assert (album / "Disc 1" / "Symphonies - Disc 1.cue").is_file()
+    assert not (album / "CD 1").exists()
+
+################################################################################
+### _stage_disc_number / _stage_soloists_normalization
+################################################################################
+
+def test_stage_disc_number_pads():
+    audio = FakeAudio({'DiscNumber': ['3']})
+    assert _stage_disc_number(audio, '03') is True
+    assert audio.tags['DiscNumber'] == ['03']
+
+
+def test_stage_disc_number_drops_slash_total():
+    audio = FakeAudio({'DiscNumber': ['1/2']})
+    assert _stage_disc_number(audio, '1') is True
+    assert audio.tags['DiscNumber'] == ['1']
+
+
+def test_stage_disc_number_strips_when_target_none():
+    audio = FakeAudio({'Album': ['X'], 'DiscNumber': ['1']})
+    assert _stage_disc_number(audio, None) is True
+    assert 'DiscNumber' not in audio.tags
+
+
+def test_stage_disc_number_noop_when_already_correct():
+    audio = FakeAudio({'DiscNumber': ['03']})
+    assert _stage_disc_number(audio, '03') is False
+    assert audio.tags['DiscNumber'] == ['03']
+
+
+def test_stage_disc_number_noop_strip_when_absent():
+    audio = FakeAudio({'Album': ['X']})
+    assert _stage_disc_number(audio, None) is False
+
+
+def test_stage_soloists_normalization_reorders():
+    audio = FakeAudio({'Soloists': ['Isaac Stern; Ax, Emmanual']})
+    assert _stage_soloists_normalization(audio) is True
+    assert audio.tags['Soloists'] == ['Ax, Emmanual; Stern, Isaac']
+
+
+def test_stage_soloists_normalization_noop_when_sorted():
+    audio = FakeAudio({'Soloists': ['Ax, Emmanual; Stern, Isaac']})
+    assert _stage_soloists_normalization(audio) is False
+
+
+def test_stage_soloists_normalization_noop_when_absent():
+    assert _stage_soloists_normalization(FakeAudio({'Album': ['X']})) is False
+
+################################################################################
+### _collect_and_normalize_album
+################################################################################
+
+def test_collect_and_normalize_album_multi_disc_pads(tmp_path, mocker):
+    album = tmp_path / "Album"
+    album.mkdir()
+    audios = {}
+    for n in range(1, 13):
+        disc = make_disc_with_flac(album, f"Disc {n}")
+        audios[str(disc / "01 - Track.flac")] = FakeAudio({'DiscNumber': [str(n)]})
+    mocker.patch('src.standardize.FLAC', side_effect=lambda p: audios[p])
+
+    track_tags, errors = _collect_and_normalize_album(str(album))
+
+    assert errors == []
+    assert len(track_tags) == 12
+    assert audios[str(album / "Disc 1" / "01 - Track.flac")].tags['DiscNumber'] == ['01']
+    assert audios[str(album / "Disc 12" / "01 - Track.flac")].tags['DiscNumber'] == ['12']
+
+
+def test_collect_and_normalize_album_drops_slash_total(tmp_path, mocker):
+    album = tmp_path / "Album"
+    album.mkdir()
+    disc1 = make_disc_with_flac(album, "Disc 1")
+    disc2 = make_disc_with_flac(album, "Disc 2")
+    a1 = FakeAudio({'DiscNumber': ['1/2']})
+    a2 = FakeAudio({'DiscNumber': ['2/2']})
+    audios = {
+        str(disc1 / "01 - Track.flac"): a1,
+        str(disc2 / "01 - Track.flac"): a2,
+    }
+    mocker.patch('src.standardize.FLAC', side_effect=lambda p: audios[p])
+
+    _track_tags, errors = _collect_and_normalize_album(str(album))
+
+    assert errors == []
+    assert a1.tags['DiscNumber'] == ['1']
+    assert a2.tags['DiscNumber'] == ['2']
+
+
+def test_collect_and_normalize_album_single_disc_strips_and_reorders(tmp_path, mocker):
+    album = tmp_path / "Album"
+    album.mkdir()
+    (album / "01 - Track.flac").write_text("dummy")
+    audio = FakeAudio({
+        'Album': ['X'],
+        'DiscNumber': ['1'],
+        'Soloists': ['Isaac Stern; Ax, Emmanual'],
+    })
+    mocker.patch('src.standardize.FLAC', side_effect=lambda p: audio)
+
+    track_tags, errors = _collect_and_normalize_album(str(album))
+
+    assert errors == []
+    assert track_tags == [{
+        'year': None, 'album': 'X', 'orchestra': None,
+        'conductor': None, 'soloists': 'Isaac Stern; Ax, Emmanual',
+    }]
+    assert 'DiscNumber' not in audio.tags
+    assert audio.tags['Soloists'] == ['Ax, Emmanual; Stern, Isaac']
+
+
+def test_collect_and_normalize_album_leaves_root_flac_of_multi_disc(tmp_path, mocker):
+    album = tmp_path / "Album"
+    album.mkdir()
+    disc = make_disc_with_flac(album, "Disc 1")
+    stray = album / "00 - Intro.flac"
+    stray.write_text("dummy")
+    audios = {
+        str(disc / "01 - Track.flac"): FakeAudio({'DiscNumber': ['1']}),
+        str(stray): FakeAudio({'DiscNumber': ['9']}),
+    }
+    mocker.patch('src.standardize.FLAC', side_effect=lambda p: audios[p])
+
+    _track_tags, errors = _collect_and_normalize_album(str(album))
+
+    assert errors == []
+    assert audios[str(stray)].tags['DiscNumber'] == ['9']
+
+
+def test_collect_and_normalize_album_records_open_error(tmp_path, mocker):
+    album = tmp_path / "Album"
+    album.mkdir()
+    (album / "01 - Track.flac").write_text("dummy")
+    mocker.patch('src.standardize.FLAC', side_effect=OSError("boom"))
+
+    track_tags, errors = _collect_and_normalize_album(str(album))
+
+    assert track_tags == []
+    assert len(errors) == 1
+    assert "failed to open" in errors[0]
+
+################################################################################
+### standardize_album
+################################################################################
+
+def test_standardize_album_opens_each_flac_once(tmp_path, mocker):
+    album = tmp_path / "[1996] Quartets (Marie-Claire Alain)"
+    album.mkdir()
+    d1 = make_disc_with_flac(album, "Disc 1")
+    d2 = make_disc_with_flac(album, "Disc 2")
+    (d1 / "CDImage.cue").write_text("x")
+
+    def make_audio(disc_no):
+        return FakeAudio({
+            'Album': ['Quartets'], 'Year Recorded': ['1996'],
+            'Soloists': ['Alain, Marie-Claire'], 'DiscNumber': [disc_no],
+        })
+    audios = {
+        str(d1 / "01 - Track.flac"): make_audio('1'),
+        str(d2 / "01 - Track.flac"): make_audio('2'),
+    }
+    flac_mock = mocker.patch('src.standardize.FLAC', side_effect=lambda p: audios[p])
+
+    errors = standardize_album(str(album))
+
+    assert errors == []
+    # two FLAC files, one FLAC(path) call each -- nothing else re-opens them
+    assert flac_mock.call_count == 2
+    assert (d1 / "Quartets - Disc 1.cue").is_file()
+
+
+def test_standardize_album_renames_cue_and_strips_disc(tmp_path, mocker):
+    album = tmp_path / "[1996] Quartets (Auryn Quartet)"
+    album.mkdir()
+    (album / "01 - Track.flac").write_text("dummy")
+    (album / "CDImage.cue").write_text("x")
+    (album / "Logfile.LOG").write_text("x")
+    audio = FakeAudio({
+        'Album': ['Quartets'],
+        'Year Recorded': ['1996'],
+        'DiscNumber': ['1'],
+    })
+    mocker.patch('src.standardize.FLAC', side_effect=lambda p: audio)
+
+    errors = standardize_album(str(album))
+
+    assert errors == []
+    assert (album / "Quartets.cue").is_file()
+    assert (album / "Quartets.log").is_file()
+    assert not (album / "CDImage.cue").exists()
+    assert 'DiscNumber' not in audio.tags
+
+
+def test_standardize_album_renames_album_folder(tmp_path, mocker):
+    album = tmp_path / "Composer" / "Old Name"
+    album.mkdir(parents=True)
+    (album / "01 - Track.flac").write_text("dummy")
+    audio = FakeAudio({
+        'Year Recorded': ['1960'],
+        'Album': ['Organ Works'],
+        'Soloists': ['Alain, Marie-Claire'],
+    })
+    mocker.patch('src.standardize.FLAC', side_effect=lambda p: audio)
+
+    errors = standardize_album(str(album))
+
+    assert errors == []
+    assert not album.exists()
+    assert (album.parent / "[1960] Organ Works (Marie-Claire Alain)").is_dir()
+
+################################################################################
+### run integration
+################################################################################
+
+def test_run_dry_run_includes_file_rows(tmp_path):
+    root = tmp_path / "lib"
+    album = root / "Composer" / "Album"
+    album.mkdir(parents=True)
+    (album / "01 - Track.flac").write_text("dummy")
+    (album / "CDImage.cue").write_text("x")
+
+    out = tmp_path / "report.csv"
+    run(Namespace(dir=str(root), dry_run=True, output_file=str(out), file_list=None))
+
+    with open(out, newline='', encoding='utf-8-sig') as f:
+        rows = list(csv.DictReader(f))
+    file_rows = [r for r in rows if r["type"] == "file"]
+    assert len(file_rows) == 1
+    assert file_rows[0]["original_name"] == "CDImage.cue"
+    # dummy flac has no readable Album tag -> flagged, not renamed
+    assert file_rows[0]["status"] == "flagged"
+
+
+def test_run_live_renames_cue_and_normalizes_disc(tmp_path, mocker):
+    root = tmp_path / "lib"
+    album_name = "[1996] French String Quartets (Marie-Claire Alain)"
+    album = root / "Composer" / album_name
+    album.mkdir(parents=True)
+    (album / "01 - Track.flac").write_text("dummy")
+    (album / "CDImage.cue").write_text("x")
+    (album / "Logfile.log").write_text("x")
+
+    audio = FakeAudio({
+        'Year Recorded': ['1996'],
+        'Album': ['French String Quartets'],
+        'Soloists': ['Marie-Claire Alain'],  # not yet 'Last, First'
+        'DiscNumber': ['1'],
+    })
+    mocker.patch('src.standardize.FLAC', side_effect=lambda p: audio)
+
+    run(Namespace(dir=str(root), dry_run=False, output_file=None, file_list=None))
+
+    assert (album / "French String Quartets.cue").is_file()
+    assert (album / "French String Quartets.log").is_file()
+    assert not (album / "CDImage.cue").exists()
+    assert 'DiscNumber' not in audio.tags
+    assert audio.tags['Soloists'] == ['Alain, Marie-Claire']  # reordered in the same pass
+    assert album.is_dir()  # folder already canonical, not renamed

@@ -28,7 +28,7 @@ The tool was written to reflect my personal idiosyncrasies in tagging classical 
 - Removes FLAC, log, cue, and image/playlist files after converting an album to MP3
 - Converts high-resolution FLAC files to 16-bit 44 kHz
 - Organizes album directories (Scans.pdf, disc folders, cleanup)
-- Standardizes disc folder names to `Disc N` with shared zero-padding
+- Standardizes album and disc folder names, renames CUE/LOG files to match the `Album` tag, and normalizes the `DiscNumber` tag
 - Builds a database and XLSX catalog of every tagged track, keyed on audio content so it survives renames
 - Writes a timestamped log file for every command, alongside the usual on-screen progress
 
@@ -237,7 +237,7 @@ Arguments:
 The CSV file summarizes all actions performed, or that would be performed in `--dry-run` mode. Each mode is separated by a blank line and includes appropriate headers.
 
 ### Standardize
-Rename album folders to standard form. Also supports bulk retagging of specific field values.
+Rename album and disc folders to standard form, rename each album's CUE/LOG files to match its `Album` tag, and normalize the `DiscNumber` tag. Also supports bulk retagging of specific field values.
 
 #### Folder renaming
 
@@ -268,7 +268,7 @@ Performance info follows these templates:
 
 Other combinations are flagged and not renamed.
 
-Dry-run mode writes one row per planned disc rename, planned album rename, or flagged album:
+Dry-run mode writes one row per planned disc rename, planned album rename, planned CUE/LOG file rename, or flagged item:
 
 ```bash
 python src/tagger.py \
@@ -280,9 +280,9 @@ python src/tagger.py \
 
 Columns:
 
-- `path`: parent directory of the folder to rename
-- `original_name` / `new_name`: folder name
-- `type` (`disc` \| `album`), `status` (`planned` \| `flagged` \| `skipped`), `flag_reason`
+- `path`: parent directory of the folder to rename, or the directory holding the CUE/LOG file
+- `original_name` / `new_name`: folder name, or CUE/LOG file name
+- `type` (`disc` \| `album` \| `file`), `status` (`planned` \| `flagged` \| `skipped`), `flag_reason`
 - observed tag summaries and chosen year/album/orchestra/conductor/soloist
 - `performance_info`
 
@@ -302,6 +302,17 @@ Arguments:
 - `--dry-run`: Write planned/flagged renames without making changes (`--output-file` required)
 - `--output-file`: CSV report (required with `--dry-run`)
 
+#### CUE and LOG files
+
+`standardize` also renames each album's `.cue` and `.log` files to match its `Album` tag:
+
+- Single-disc album: `<Album>.cue` and `<Album>.log` in the album folder.
+- Multi-disc album: `<Album> - Disc N.cue` and `<Album> - Disc N.log` inside each `Disc N` folder, where `Disc N` is that disc folder's canonical name (disc number zero-padded to the same width as the `Disc NN` folders).
+
+`<Album>` is the `Album` tag with `/` and `:` replaced, so it matches the album portion of the folder name. These renames appear as `type` `file` rows in the dry-run CSV and are applied from the reviewed `--file-list`, the same as folder renames. A folder holding more than one `.cue` (or more than one `.log`) is flagged and left untouched, as is any album whose `Album` tag cannot be resolved (missing or conflicting across tracks).
+
+A live `--dir` run also normalizes the `DiscNumber` tag on every FLAC: on a multi-disc album it is set to the padded disc-folder number; on a single-disc album it is removed. Like the Soloists normalization, this happens automatically on live runs and is not previewed row by row in the dry-run CSV.
+
 #### Bulk-retagging
 
 Dry-run mode also writes unique tag lists next to `--output-file`: `{stem}_albums.csv`, `{stem}_orchestras.csv`, `{stem}_conductors.csv`, and `{stem}_soloists.csv`. 
@@ -319,7 +330,7 @@ python src/tagger.py \
 
 Only rows with non-empty `new_*` that differ from `original_*` are applied. Album / Orchestra / Conductor use whole-field exact match; Soloists remap matching `;`-separated tokens and rejoin with `; `. If the reviewed CSV includes soloist rows, the remapped Soloists tag is also normalized on every matching file: each person is stored as `Last, First`, exact duplicates are dropped, and the list is sorted alphabetically by last name.
 
-After retagging, any album with at least one changed file is rescanned and its disc/album folders are renamed to match the current tags, following the same `[YYYY] Album (performance information)` convention as a plain `--dir` run above. Albums the retag map didn't touch are left alone.
+After retagging, any album with at least one changed file is rescanned and standardized to match the current tags: its CUE/LOG files are renamed, its `DiscNumber` tags normalized, and its disc/album folders renamed, following the same conventions as a plain `--dir` run above. Albums the retag map didn't touch are left alone.
 
 ### Catalog
 Build or update a persistent inventory of every FLAC track in a directory, with its canonical tags. Unlike `read`, which extracts *legacy* tags for migration into the canonical schema, `catalog` reads the canonical tags already present on already-tagged files, and is meant to be rerun periodically as the library changes.

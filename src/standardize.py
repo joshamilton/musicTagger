@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 ################################################################################
 
 AUDIO_EXTENSIONS = {'.flac', '.ape', '.wv', '.wav', '.iso', '.m4a'}
+CUE_LOG_EXTENSIONS = {'.cue', '.log'}
 DISC_LIKE_PATTERN = re.compile(r'^(?:CD|Disc|Disk)\s*(\d+)\b.*', re.IGNORECASE)
 YEAR_PATTERN = re.compile(r'\d{4}')
 
@@ -91,6 +92,34 @@ def has_flac_files(directory):
     except OSError:
         return False
     return False
+
+
+def find_cue_log_files(directory):
+    """
+    Return (cues, logs): base filenames of the .cue and .log files directly
+    in directory, matched case-insensitively, each list sorted.
+
+    Args:
+        directory (str): Directory to list.
+
+    Returns:
+        tuple: (list of .cue filenames, list of .log filenames).
+    """
+    cues = []
+    logs = []
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return cues, logs
+    for entry in entries:
+        if not os.path.isfile(os.path.join(directory, entry)):
+            continue
+        ext = os.path.splitext(entry)[1].lower()
+        if ext == '.cue':
+            cues.append(entry)
+        elif ext == '.log':
+            logs.append(entry)
+    return sorted(cues), sorted(logs)
 
 
 def parse_disc_number(folder_name):
@@ -183,11 +212,28 @@ def album_folder_for_file(file_path):
 ### Disc mapping
 ################################################################################
 
+def disc_pad_width(album_path):
+    """
+    Zero-pad width for this album's disc numbers, i.e. the width used for
+    its "Disc NN" folders: len(str(highest disc number)), minimum 1.
+
+    Args:
+        album_path (str): Path to an album directory.
+
+    Returns:
+        int: Number of digits to pad disc numbers to (1 when single-disc).
+    """
+    children = find_disc_children(album_path)
+    if not children:
+        return 1
+    return len(str(max(number for _, number in children)))
+
+
 def build_disc_mappings(album_path):
     """
     Build rename mappings for disc children of an album.
 
-    Preserves each disc's existing number; pads to len(str(max_number)).
+    Preserves each disc's existing number; pads to disc_pad_width().
 
     Returns:
         list: Dicts with path, original_name, new_name (basenames), type, needs_rename.
@@ -196,8 +242,7 @@ def build_disc_mappings(album_path):
     if not children:
         return []
 
-    max_number = max(number for _, number in children)
-    digit_padding = len(str(max_number))
+    digit_padding = disc_pad_width(album_path)
 
     mappings = []
     for original_basename, number in children:
@@ -243,17 +288,35 @@ def get_tag(audio, *keys):
     return None
 
 
+def _read_naming_tags(audio):
+    """
+    Read the tags analyze_album and cue_log_plan_rows need from one FLAC.
+
+    Returns:
+        dict: keys year, album, orchestra, conductor, soloists.
+    """
+    return {
+        'year': get_tag(audio, 'Year Recorded'),
+        'album': get_tag(audio, 'Album', 'album'),
+        'orchestra': get_tag(audio, 'Orchestra', 'orchestra'),
+        'conductor': get_tag(audio, 'Conductor', 'conductor'),
+        'soloists': get_tag(audio, 'Soloists'),
+    }
+
+
 def collect_track_tags(album_path):
     """
     Collect tag dicts for every FLAC under album_path (including disc children).
+
+    Read-only; used by the dry-run plan. The live path uses
+    _collect_and_normalize_album instead, which reads the same tags and
+    normalizes Soloists/DiscNumber in the same open.
 
     Returns:
         list: Dicts with keys year, album, orchestra, conductor, soloists.
     """
     tracks = []
-    for dirpath, dirnames, filenames in os.walk(album_path):
-        # Do not walk into nested non-disc junk beyond one level of discs;
-        # os.walk still descends; that's fine for Disc N / track.flac layout.
+    for dirpath, _dirnames, filenames in os.walk(album_path):
         for name in sorted(filenames):
             if not name.lower().endswith('.flac'):
                 continue
@@ -262,13 +325,7 @@ def collect_track_tags(album_path):
                 audio = FLAC(path)
             except Exception:
                 continue
-            tracks.append({
-                'year': get_tag(audio, 'Year Recorded'),
-                'album': get_tag(audio, 'Album', 'album'),
-                'orchestra': get_tag(audio, 'Orchestra', 'orchestra'),
-                'conductor': get_tag(audio, 'Conductor', 'conductor'),
-                'soloists': get_tag(audio, 'Soloists'),
-            })
+            tracks.append(_read_naming_tags(audio))
     return tracks
 
 
@@ -365,6 +422,31 @@ def most_common_or_tie(values):
     if len(ranked) >= 2 and ranked[0][1] == ranked[1][1]:
         return ranked[0][0], True
     return ranked[0][0], False
+
+
+def resolve_album_title(track_tags):
+    """
+    Resolve an album's Album tag to a single title.
+
+    Args:
+        track_tags (list): Tag dicts from collect_track_tags.
+
+    Returns:
+        tuple: (title, reason). title is the most common non-empty Album
+            value; it is None when the tag cannot be resolved, and reason
+            then says why ("missing Album", "conflicting Album titles
+            across tracks", or "tie for most common Album").
+    """
+    albums = [t.get('album') for t in track_tags]
+    album_chosen, album_tie = most_common_or_tie(albums)
+    distinct = {a for a in albums if a}
+    if not album_chosen:
+        return None, "missing Album"
+    if len(distinct) > 1:
+        return None, "conflicting Album titles across tracks"
+    if album_tie:
+        return None, "tie for most common Album"
+    return album_chosen, None
 
 
 def join_observed(values):
@@ -553,24 +635,20 @@ def analyze_album(album_path, track_tags=None):
     }
 
     year_chosen = earliest_year(years)
-    album_chosen, album_tie = most_common_or_tie(albums)
+    album_chosen, _ = most_common_or_tie(albums)
     orchestra_chosen, orch_tie = most_common_or_tie(orchestras)
     conductor_raw, cond_tie = most_common_or_tie(conductors)
     soloists_raw, solo_tie = most_common_or_tie(soloists_list)
 
-    distinct_albums = {a for a in albums if a}
+    _album_title, album_flag = resolve_album_title(track_tags)
     flag_reasons = []
 
     if not track_tags:
         flag_reasons.append("no readable FLAC tags")
     if not year_chosen:
         flag_reasons.append("missing Year Recorded")
-    if not album_chosen:
-        flag_reasons.append("missing Album")
-    if len(distinct_albums) > 1:
-        flag_reasons.append("conflicting Album titles across tracks")
-    if album_tie:
-        flag_reasons.append("tie for most common Album")
+    if album_flag:
+        flag_reasons.append(album_flag)
     if orch_tie:
         flag_reasons.append("tie for most common Orchestra")
     if cond_tie:
@@ -641,6 +719,87 @@ def disc_plan_rows(album_path):
     return rows
 
 
+def _file_row(directory, original_name, new_name, status, flag_reason):
+    """Build a type='file' plan row for a CUE/LOG rename."""
+    row = {
+        'path': directory,
+        'original_name': original_name,
+        'new_name': new_name,
+        'type': 'file',
+        'status': status,
+        **EMPTY_OBSERVED,
+    }
+    row['flag_reason'] = flag_reason
+    return row
+
+
+def cue_log_plan_rows(album_path, track_tags=None):
+    """
+    Plan rows (type='file') for renaming an album's CUE/LOG files to match
+    its Album tag.
+
+    Target names:
+      - a file in the album folder itself -> "<Album>.cue" / "<Album>.log"
+      - a file inside a "Disc N" folder -> "<Album> - Disc N.cue" ...,
+        where "Disc N" is that disc folder's canonical name (disc number
+        zero-padded to disc_pad_width()).
+    "<Album>" is the Album tag run through sanitize_component.
+
+    A folder holding more than one .cue (or more than one .log) is flagged
+    and its CUE/LOG files are left untouched. If the Album tag cannot be
+    resolved, every CUE/LOG under the album is flagged.
+
+    Args:
+        album_path (str): Path to the album directory.
+        track_tags (list|None): Optional preloaded tag dicts (for tests).
+
+    Returns:
+        list: CSV rows (planned, skipped, or flagged).
+    """
+    if track_tags is None:
+        track_tags = collect_track_tags(album_path)
+
+    title, title_reason = resolve_album_title(track_tags)
+
+    # Every place a CUE/LOG can live: the album folder, then each disc folder.
+    locations = [(album_path, None)]
+    width = disc_pad_width(album_path)
+    for child_name, disc_number in find_disc_children(album_path):
+        disc_label = f"Disc {str(disc_number).zfill(width)}"
+        locations.append((os.path.join(album_path, child_name), disc_label))
+
+    rows = []
+    for directory, disc_label in locations:
+        cues, logs = find_cue_log_files(directory)
+        if not cues and not logs:
+            continue
+
+        if title is None:
+            for name in cues + logs:
+                rows.append(_file_row(directory, name, '', 'flagged', title_reason))
+            continue
+
+        for names, ext in ((cues, '.cue'), (logs, '.log')):
+            if not names:
+                continue
+            if len(names) > 1:
+                for name in names:
+                    rows.append(_file_row(
+                        directory, name, '', 'flagged',
+                        f"multiple {ext} files in one folder",
+                    ))
+                continue
+            base = sanitize_component(title)
+            if disc_label is not None:
+                base = f"{base} - {disc_label}"
+            new_name = f"{base}{ext}"
+            original_name = names[0]
+            status = 'skipped' if filenames_match(original_name, new_name) else 'planned'
+            rows.append(_file_row(directory, original_name, new_name, status, ''))
+
+    return rows
+
+
 def build_plan_from_dir(root_dir):
     """
     Build full dry-run plan: disc planned rows + album planned/flagged/skipped.
@@ -663,6 +822,7 @@ def build_plan_from_dir(root_dir):
         rows.extend(disc_plan_rows(album_path))
         album_row = analyze_album(album_path, track_tags=track_tags)
         rows.append(album_row)
+        rows.extend(cue_log_plan_rows(album_path, track_tags=track_tags))
         if album_row['status'] == 'planned':
             planned_count += 1
         elif album_row['status'] == 'skipped':
@@ -886,42 +1046,148 @@ def apply_retag_mappings(root_dir, mappings):
     return errors, touched_albums
 
 
-def normalize_soloists_for_dir(root_dir):
+def _stage_soloists_normalization(audio):
     """
-    Walk FLACs under root_dir and normalize each file's Soloists tag in place:
-    flip each person to 'Last, First', drop exact duplicates, sort by last name.
+    Reorder an open FLAC's Soloists tag in place if it is not already
+    canonical (each person 'Last, First', exact duplicates dropped, sorted
+    by last name). Does not save.
 
     Returns:
-        list: Error messages (empty on full success).
+        bool: True if the tag was changed.
     """
+    current = get_tag(audio, 'Soloists')
+    if not current:
+        return False
+    normalized = normalize_soloists_field(current)
+    if normalized == current:
+        return False
+    audio['Soloists'] = normalized
+    return True
+
+
+def _stage_disc_number(audio, target):
+    """
+    Force an open FLAC's DiscNumber tag to `target` in place, or strip it
+    when `target` is None. Does not save.
+
+    Args:
+        audio: An open mutagen FLAC.
+        target (str|None): Zero-padded disc number to write, or None to
+            remove the tag.
+
+    Returns:
+        bool: True if the tag was changed.
+    """
+    current = get_tag(audio, 'DiscNumber')
+    if target is None:
+        if current is None:
+            return False
+        for key in [k for k in audio.tags.keys() if k.lower() == 'discnumber']:
+            del audio.tags[key]
+        return True
+    if current == target:
+        return False
+    audio['DiscNumber'] = target
+    return True
+
+
+def _collect_and_normalize_album(album_path):
+    """
+    Walk every FLAC under album_path exactly once. For each file: read the
+    naming tags, normalize its Soloists order and its DiscNumber tag in
+    place, and save once if either changed.
+
+    DiscNumber target: on a multi-disc album, the disc-folder number
+    zero-padded to that album's "Disc NN" width; on a single-disc album,
+    None (the tag is stripped). A FLAC directly in a multi-disc album
+    folder (not under any "Disc N") keeps its DiscNumber, with a warning.
+
+    Args:
+        album_path (str): Path to the album directory.
+
+    Returns:
+        tuple: (track_tags, errors) where track_tags is the list of dicts
+            collect_track_tags returns, and errors is a list of message
+            strings (empty on full success).
+    """
+    children = find_disc_children(album_path)
+    if children:
+        width = disc_pad_width(album_path)
+        disc_targets = {
+            os.path.join(album_path, name): str(number).zfill(width)
+            for name, number in children
+        }
+    else:
+        disc_targets = None
+
+    track_tags = []
     errors = []
-    flac_paths = find_flac_files(root_dir)
-    updated = 0
-    for index, path in enumerate(tqdm(flac_paths, desc="Normalizing soloist order", unit="file"), start=1):
-        # See apply_retag_mappings for why the milestone check lives in
-        # `finally`: most iterations take an early `continue` below.
-        try:
+    for dirpath, _dirnames, filenames in os.walk(album_path):
+        target = None if disc_targets is None else disc_targets.get(dirpath)
+        in_disc_zone = disc_targets is None or target is not None
+        for name in sorted(filenames):
+            if not name.lower().endswith('.flac'):
+                continue
+            path = os.path.join(dirpath, name)
             try:
                 audio = FLAC(path)
             except Exception as e:
                 errors.append(f"{path}: failed to open ({e})")
                 continue
-            current = get_tag(audio, 'Soloists')
-            if not current:
-                continue
-            normalized = normalize_soloists_field(current)
-            if normalized == current:
-                continue
-            try:
-                audio['Soloists'] = normalized
-                audio.save()
-                updated += 1
-            except Exception as e:
-                errors.append(f"{path}: failed to save ({e})")
-        finally:
-            if index % TRACK_MILESTONE_INTERVAL == 0:
-                logger.info(f"Normalized {index} of {len(flac_paths)} files so far ({updated} updated)...")
-    logger.info(f"Normalized soloist order in {updated} of {len(flac_paths)} FLAC files.")
+
+            track_tags.append(_read_naming_tags(audio))
+
+            changed = _stage_soloists_normalization(audio)
+            if in_disc_zone:
+                if _stage_disc_number(audio, target):
+                    changed = True
+            else:
+                logger.warning(
+                    f"DiscNumber left as-is (FLAC not inside a Disc folder "
+                    f"of a multi-disc album): {path}"
+                )
+
+            if changed:
+                try:
+                    audio.save()
+                except Exception as e:
+                    errors.append(f"{path}: failed to save ({e})")
+
+    return track_tags, errors
+
+
+def standardize_album(album_path):
+    """
+    Standardize one album in a single pass over its FLAC files:
+
+      1. open each FLAC once: read naming tags, normalize the Soloists and
+         DiscNumber tags in place
+      2. rename CUE/LOG files to match the Album tag
+      3. rename disc folders to "Disc NN"
+      4. rename the album folder to "[YYYY] Album (performance info)"
+
+    Steps 2-4 use only the tags read in step 1 (no re-open) and run
+    inner-to-outer, so every path stays valid until its own rename.
+
+    Args:
+        album_path (str): Path to the album directory.
+
+    Returns:
+        list: Error messages (empty on full success).
+    """
+    track_tags, errors = _collect_and_normalize_album(album_path)
+
+    for row in cue_log_plan_rows(album_path, track_tags=track_tags):
+        if row['status'] == 'planned':
+            errors.extend(apply_file_rename(row))
+
+    disc_errors, _renamed = apply_disc_renames_for_album(album_path)
+    errors.extend(disc_errors)
+
+    album_row = analyze_album(album_path, track_tags=track_tags)
+    if album_row['status'] == 'planned':
+        errors.extend(apply_album_rename(album_row))
+
     return errors
 
 ################################################################################
@@ -980,16 +1246,68 @@ def _apply_renames_in_parent(parent, renames):
     return errors
 
 
-def apply_album_rename(row):
-    """Apply a single album folder rename."""
+def _same_fs_object(path_a, path_b):
+    """
+    True when both paths resolve to the same file on disk.
+
+    Used to tell a real name collision apart from a rename that only
+    changes case: on a case-insensitive share os.path.exists(dest) is
+    already true because dest resolves back to src itself.
+    """
+    try:
+        return os.path.samefile(path_a, path_b)
+    except OSError:
+        return False
+
+
+def _rename_case_only(src, dest):
+    """
+    Rename src -> dest when the two names differ only by case (or another
+    form the share folds together), so dest already appears to exist
+    because it resolves to src. A direct os.rename is refused or a no-op
+    on such a share, so move src to a temporary name first.
+
+    If dest still resolves to something once src is out of the way, it was
+    a genuinely separate file after all: undo and report the collision.
+    """
+    parent = os.path.dirname(dest) or '.'
+    temp_path = os.path.join(parent, f".std_rename_{uuid.uuid4().hex}")
+    try:
+        os.rename(src, temp_path)
+    except OSError as e:
+        return [f"{src} -> {dest}: {e}"]
+    if os.path.exists(dest):
+        try:
+            os.rename(temp_path, src)
+        except OSError:
+            pass
+        return [f"destination already exists: {dest}"]
+    try:
+        os.rename(temp_path, dest)
+    except OSError as e:
+        try:
+            os.rename(temp_path, src)
+        except OSError:
+            pass
+        return [f"{src} -> {dest}: {e}"]
+    return []
+
+
+def _apply_one_rename(row, source_exists):
+    """
+    Apply one rename row. source_exists is os.path.isdir for album/disc
+    folders, os.path.isfile for CUE/LOG files.
+    """
     src = row_src(row)
     dest = row_dest(row)
-    if not os.path.isdir(src):
+    if not source_exists(src):
         return [f"missing source: {src}"]
     if filenames_match(row['original_name'], row['new_name']):
         return []
     if os.path.exists(dest):
-        return [f"destination already exists: {dest}"]
+        if not _same_fs_object(src, dest):
+            return [f"destination already exists: {dest}"]
+        return _rename_case_only(src, dest)
     try:
         os.rename(src, dest)
     except OSError as e:
@@ -997,11 +1315,27 @@ def apply_album_rename(row):
     return []
 
 
+def apply_album_rename(row):
+    """Apply a single album folder rename."""
+    return _apply_one_rename(row, os.path.isdir)
+
+
+def apply_file_rename(row):
+    """Apply a single CUE/LOG file rename (row['type'] == 'file')."""
+    return _apply_one_rename(row, os.path.isfile)
+
+
 def apply_rename_rows(rows):
     """
-    Apply planned rename rows: disc first (grouped by path), then album.
+    Apply planned rename rows: CUE/LOG files first, then disc folders
+    (grouped by path), then album folders.
+
+    Files go first so a later disc-folder rename simply carries the
+    already-renamed file along, and every recorded path stays valid until
+    its phase runs.
     """
     errors = []
+    file_rows = [r for r in rows if r['type'] == 'file']
     disc_rows = [r for r in rows if r['type'] == 'disc']
     album_rows = [r for r in rows if r['type'] == 'album']
 
@@ -1009,10 +1343,17 @@ def apply_rename_rows(rows):
     for row in disc_rows:
         by_parent[row['path']].append(row)
 
-    total = len(disc_rows) + len(album_rows)
+    total = len(file_rows) + len(disc_rows) + len(album_rows)
     processed = 0
     last_milestone = 0
-    with tqdm(total=total, desc="Applying renames", unit="folder") as pbar:
+    with tqdm(total=total, desc="Applying renames", unit="item") as pbar:
+        for row in file_rows:
+            errors.extend(apply_file_rename(row))
+            pbar.update(1)
+            processed += 1
+            if processed % ALBUM_MILESTONE_INTERVAL == 0:
+                logger.info(f"Applied {processed} of {total} renames so far ({len(errors)} errors)...")
+
         for parent, renames in sorted(by_parent.items()):
             errors.extend(_apply_renames_in_parent(parent, renames))
             pbar.update(len(renames))
@@ -1032,7 +1373,7 @@ def apply_rename_rows(rows):
             if processed % ALBUM_MILESTONE_INTERVAL == 0:
                 logger.info(f"Applied {processed} of {total} renames so far ({len(errors)} errors)...")
 
-    unknown = [r for r in rows if r['type'] not in ('disc', 'album')]
+    unknown = [r for r in rows if r['type'] not in ('file', 'disc', 'album')]
     for row in unknown:
         errors.append(f"unknown type {row['type']!r}: {row_src(row)}")
 
@@ -1055,85 +1396,44 @@ def apply_disc_renames_for_album(album_path):
     return _apply_renames_in_parent(album_path, to_rename), True
 
 
-def apply_plan_live(root_dir):
-    """One-pass: disc renames then album renames for each album under root_dir."""
+def _standardize_albums(albums):
+    """
+    Run standardize_album over a list of album paths with progress logging.
+
+    The album paths stay valid throughout: standardize_album renames names
+    inside an album and the album folder itself, never a parent, and album
+    folders are never nested.
+
+    Returns:
+        list: Error messages (empty on full success).
+    """
     errors = []
-    # Snapshot album paths once: disc renames only touch subfolder names
-    # inside an album, never the album folder's own path, so this list
-    # stays valid for both passes below.
-    albums = find_album_folders(root_dir)
-    renamed_count = 0
-    already_correct_count = 0
-    for index, album_path in enumerate(tqdm(albums, desc="Renaming disc folders", unit="album"), start=1):
-        album_errors, renamed = apply_disc_renames_for_album(album_path)
-        errors.extend(album_errors)
-        if renamed:
-            renamed_count += 1
-        else:
-            already_correct_count += 1
+    for index, album_path in enumerate(tqdm(albums, desc="Standardizing albums", unit="album"), start=1):
+        errors.extend(standardize_album(album_path))
         if index % ALBUM_MILESTONE_INTERVAL == 0:
             logger.info(
-                f"Checked {index} of {len(albums)} albums for disc renames: "
-                f"{renamed_count} needed renaming, {already_correct_count} already correct..."
-            )
-    planned_count = 0
-    skipped_count = 0
-    flagged_count = 0
-    for index, album_path in enumerate(tqdm(albums, desc="Analyzing albums", unit="album"), start=1):
-        row = analyze_album(album_path)
-        if row['status'] == 'planned':
-            planned_count += 1
-            errors.extend(apply_album_rename(row))
-        elif row['status'] == 'skipped':
-            skipped_count += 1
-        else:
-            flagged_count += 1
-        if index % ALBUM_MILESTONE_INTERVAL == 0:
-            logger.info(
-                f"Checked {index} of {len(albums)} albums for album renames: "
-                f"{planned_count} needed renaming, {skipped_count} already correct, "
-                f"{flagged_count} flagged..."
+                f"Standardized {index} of {len(albums)} albums "
+                f"({len(errors)} error(s) so far)..."
             )
     return errors
+
+
+def apply_plan_live(root_dir):
+    """
+    One-pass live standardize for every album under root_dir. Each album is
+    handled by standardize_album: one open per FLAC to normalize the
+    Soloists and DiscNumber tags, then CUE/LOG, disc-folder, and
+    album-folder renames.
+    """
+    return _standardize_albums(find_album_folders(root_dir))
 
 
 def apply_plan_live_for_albums(album_paths):
-    """Disc then album renames, scoped to specific album folders (e.g. retag-touched albums)."""
-    errors = []
-    albums = sorted(album_paths)
-    renamed_count = 0
-    already_correct_count = 0
-    for index, album_path in enumerate(tqdm(albums, desc="Renaming disc folders", unit="album"), start=1):
-        album_errors, renamed = apply_disc_renames_for_album(album_path)
-        errors.extend(album_errors)
-        if renamed:
-            renamed_count += 1
-        else:
-            already_correct_count += 1
-        if index % ALBUM_MILESTONE_INTERVAL == 0:
-            logger.info(
-                f"Checked {index} of {len(albums)} albums for disc renames: "
-                f"{renamed_count} needed renaming, {already_correct_count} already correct..."
-            )
-    planned_count = 0
-    skipped_count = 0
-    flagged_count = 0
-    for index, album_path in enumerate(tqdm(albums, desc="Analyzing albums", unit="album"), start=1):
-        row = analyze_album(album_path)
-        if row['status'] == 'planned':
-            planned_count += 1
-            errors.extend(apply_album_rename(row))
-        elif row['status'] == 'skipped':
-            skipped_count += 1
-        else:
-            flagged_count += 1
-        if index % ALBUM_MILESTONE_INTERVAL == 0:
-            logger.info(
-                f"Checked {index} of {len(albums)} albums for album renames: "
-                f"{planned_count} needed renaming, {skipped_count} already correct, "
-                f"{flagged_count} flagged..."
-            )
-    return errors
+    """
+    Live standardize scoped to specific album folders (e.g. retag-touched
+    albums). Same per-album work as apply_plan_live.
+    """
+    return _standardize_albums(sorted(album_paths))
 
 ################################################################################
 ### Run
@@ -1143,14 +1443,18 @@ def run(args):
     """
     Plan or apply disc/album folder renames, or apply retag mapping CSVs.
 
-    Dry-run with --dir writes a rename CSV plus unique original_*/new_* lists.
-    --file-list with rename columns applies folder renames (disc then album).
-    --file-list with retag columns requires --dir and remaps FLAC tags;
-    a soloist mapping also normalizes the resulting Soloists tag order.
+    Dry-run with --dir writes a rename CSV (disc, album, and CUE/LOG file
+    rows) plus unique original_*/new_* lists.
+    --file-list with rename columns applies renames (CUE/LOG files, then
+    disc folders, then album folders).
+    --file-list with retag columns requires --dir and remaps FLAC tags.
     Afterward, any album with at least one retagged file is rescanned and
-    its disc/album folders renamed to match, same as a --dir-only run.
-    Live run with --dir alone scans and renames folders in one pass, and
-    normalizes every scanned file's Soloists tag order.
+    standardized the same as a --dir-only run.
+    Live run with --dir alone standardizes every album in a single pass
+    over its FLAC files: normalizes the Soloists tag order, pads the
+    DiscNumber tag to the "Disc NN" width on multi-disc albums (strips it
+    on single-disc albums), renames CUE/LOG files to match the Album tag,
+    and renames disc and album folders.
     """
     dry_run = args.dry_run
     file_list = getattr(args, 'file_list', None)
@@ -1160,6 +1464,8 @@ def run(args):
         raise ValueError("Do not combine --dry-run with --file-list; dry-run writes the list.")
     if dry_run and not output_file:
         raise ValueError("--output-file is required when using --dry-run.")
+    if output_file and not dry_run:
+        raise ValueError("--output-file is only valid with --dry-run.")
     if not args.dir and not file_list:
         raise ValueError("You must specify either --dir or --file-list.")
 
@@ -1187,7 +1493,6 @@ def run(args):
             label = 'retag'
     else:
         errors = apply_plan_live(args.dir)
-        errors.extend(normalize_soloists_for_dir(args.dir))
         label = 'rename'
 
     if errors:
